@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/benjitaylor/agentation/cli/internal/api"
+	"github.com/benjitaylor/agentation/cli/internal/servercmd"
 )
 
 func main() {
@@ -81,6 +82,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "error: %v\n", err)
 			return 1
 		}
+	case "server":
+		return servercmd.Run(commandArgs, stdout, stderr)
 	case "help", "--help", "-h":
 		printUsage(stdout)
 	default:
@@ -378,6 +381,7 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  dismiss <annotation-id>          Dismiss annotation")
 	fmt.Fprintln(writer, "  reply <annotation-id>            Add thread reply")
 	fmt.Fprintln(writer, "  watch                            Wait for new annotations/thread replies")
+	fmt.Fprintln(writer, "  server                           Manage local Agentation HTTP server")
 	fmt.Fprintln(writer)
 	fmt.Fprintln(writer, "Examples:")
 	fmt.Fprintln(writer, "  agentation pending --json")

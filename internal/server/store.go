@@ -1,0 +1,364 @@
+package server
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+type Store struct {
+	mu sync.RWMutex
+
+	sessions    map[string]Session
+	annotations map[string]Annotation
+	events      map[string][]Event
+
+	sequence int64
+
+	subsMu      sync.RWMutex
+	nextSubID   int64
+	globalSubs  map[int64]chan Event
+	sessionSubs map[string]map[int64]chan Event
+
+	idCounter uint64
+}
+
+func NewStore() *Store {
+	return &Store{
+		sessions:    make(map[string]Session),
+		annotations: make(map[string]Annotation),
+		events:      make(map[string][]Event),
+		globalSubs:  make(map[int64]chan Event),
+		sessionSubs: make(map[string]map[int64]chan Event),
+	}
+}
+
+func (s *Store) CreateSession(url, projectID string) Session {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	session := Session{
+		ID:        s.newID(),
+		URL:       url,
+		Status:    "active",
+		CreatedAt: nowISO(),
+		ProjectID: projectID,
+	}
+	s.sessions[session.ID] = session
+	s.emitLocked(EventSessionCreated, session.ID, session)
+	return session
+}
+
+func (s *Store) ListSessions() []Session {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	sessions := make([]Session, 0, len(s.sessions))
+	for _, session := range s.sessions {
+		sessions = append(sessions, session)
+	}
+	return sessions
+}
+
+func (s *Store) GetSession(id string) (Session, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	session, ok := s.sessions[id]
+	return session, ok
+}
+
+func (s *Store) GetSessionWithAnnotations(id string) (SessionWithAnnotations, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	session, ok := s.sessions[id]
+	if !ok {
+		return SessionWithAnnotations{}, false
+	}
+
+	annotations := make([]Annotation, 0)
+	for _, annotation := range s.annotations {
+		if annotation.SessionID == id {
+			annotations = append(annotations, annotation)
+		}
+	}
+
+	return SessionWithAnnotations{
+		Session:     session,
+		Annotations: annotations,
+	}, true
+}
+
+func (s *Store) AddAnnotation(sessionID string, annotation Annotation) (Annotation, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.sessions[sessionID]; !ok {
+		return Annotation{}, false
+	}
+
+	annotation.ID = s.newID()
+	annotation.SessionID = sessionID
+	annotation.Status = StatusPending
+	annotation.CreatedAt = nowISO()
+	if annotation.Timestamp == 0 {
+		annotation.Timestamp = time.Now().UnixMilli()
+	}
+	if annotation.Thread == nil {
+		annotation.Thread = []ThreadMessage{}
+	}
+
+	s.annotations[annotation.ID] = annotation
+	s.emitLocked(EventAnnotationCreated, sessionID, annotation)
+	return annotation, true
+}
+
+func (s *Store) GetAnnotation(id string) (Annotation, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	annotation, ok := s.annotations[id]
+	return annotation, ok
+}
+
+func (s *Store) UpdateAnnotation(id string, patch map[string]any) (Annotation, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	annotation, ok := s.annotations[id]
+	if !ok {
+		return Annotation{}, false
+	}
+
+	if value, exists := patch["comment"].(string); exists {
+		annotation.Comment = value
+	}
+	if value, exists := patch["status"].(string); exists {
+		annotation.Status = AnnotationStatus(value)
+	}
+	if value, exists := patch["resolvedBy"].(string); exists {
+		annotation.ResolvedBy = value
+	}
+	if value, exists := patch["resolvedAt"].(string); exists {
+		annotation.ResolvedAt = value
+	}
+
+	if annotation.Status == StatusResolved || annotation.Status == StatusDismissed {
+		if annotation.ResolvedAt == "" {
+			annotation.ResolvedAt = nowISO()
+		}
+		if annotation.ResolvedBy == "" {
+			annotation.ResolvedBy = "agent"
+		}
+	}
+
+	annotation.UpdatedAt = nowISO()
+	s.annotations[id] = annotation
+	s.emitLocked(EventAnnotationUpdated, annotation.SessionID, annotation)
+	return annotation, true
+}
+
+func (s *Store) DeleteAnnotation(id string) (Annotation, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	annotation, ok := s.annotations[id]
+	if !ok {
+		return Annotation{}, false
+	}
+
+	delete(s.annotations, id)
+	s.emitLocked(EventAnnotationDeleted, annotation.SessionID, annotation)
+	return annotation, true
+}
+
+func (s *Store) AddThreadMessage(annotationID, role, content string) (Annotation, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	annotation, ok := s.annotations[annotationID]
+	if !ok {
+		return Annotation{}, false
+	}
+
+	message := ThreadMessage{
+		ID:        s.newID(),
+		Role:      role,
+		Content:   content,
+		Timestamp: time.Now().UnixMilli(),
+	}
+	annotation.Thread = append(annotation.Thread, message)
+	annotation.UpdatedAt = nowISO()
+	s.annotations[annotationID] = annotation
+	s.emitLocked(EventThreadMessage, annotation.SessionID, annotation)
+	return annotation, true
+}
+
+func (s *Store) GetAnnotationsNeedingAttention(sessionID string) []Annotation {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	annotations := make([]Annotation, 0)
+	for _, annotation := range s.annotations {
+		if annotation.SessionID != sessionID {
+			continue
+		}
+		if needsAttention(annotation) {
+			annotations = append(annotations, annotation)
+		}
+	}
+	return annotations
+}
+
+func (s *Store) GetAllAnnotationsNeedingAttention() []Annotation {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	annotations := make([]Annotation, 0)
+	for _, annotation := range s.annotations {
+		if needsAttention(annotation) {
+			annotations = append(annotations, annotation)
+		}
+	}
+	return annotations
+}
+
+func (s *Store) GetSessionAnnotations(sessionID string) []Annotation {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	annotations := make([]Annotation, 0)
+	for _, annotation := range s.annotations {
+		if annotation.SessionID == sessionID {
+			annotations = append(annotations, annotation)
+		}
+	}
+	return annotations
+}
+
+func (s *Store) GetEventsSince(sessionID string, sequence int64) []Event {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	events := s.events[sessionID]
+	filtered := make([]Event, 0)
+	for _, event := range events {
+		if event.Sequence > sequence {
+			filtered = append(filtered, event)
+		}
+	}
+	return filtered
+}
+
+func (s *Store) EmitActionRequested(sessionID string, request ActionRequest) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.emitLocked(EventActionRequested, sessionID, request)
+}
+
+func (s *Store) SubscribeAll() (<-chan Event, func()) {
+	id := atomic.AddInt64(&s.nextSubID, 1)
+	ch := make(chan Event, 64)
+
+	s.subsMu.Lock()
+	s.globalSubs[id] = ch
+	s.subsMu.Unlock()
+
+	return ch, func() {
+		s.subsMu.Lock()
+		defer s.subsMu.Unlock()
+		delete(s.globalSubs, id)
+	}
+}
+
+func (s *Store) SubscribeSession(sessionID string) (<-chan Event, func()) {
+	id := atomic.AddInt64(&s.nextSubID, 1)
+	ch := make(chan Event, 64)
+
+	s.subsMu.Lock()
+	if s.sessionSubs[sessionID] == nil {
+		s.sessionSubs[sessionID] = make(map[int64]chan Event)
+	}
+	s.sessionSubs[sessionID][id] = ch
+	s.subsMu.Unlock()
+
+	return ch, func() {
+		s.subsMu.Lock()
+		defer s.subsMu.Unlock()
+		subs := s.sessionSubs[sessionID]
+		if subs == nil {
+			return
+		}
+		delete(subs, id)
+		if len(subs) == 0 {
+			delete(s.sessionSubs, sessionID)
+		}
+	}
+}
+
+func (s *Store) emitLocked(kind EventType, sessionID string, payload any) {
+	s.sequence++
+	event := Event{
+		Type:      kind,
+		Timestamp: nowISO(),
+		SessionID: sessionID,
+		Sequence:  s.sequence,
+		Payload:   payload,
+	}
+	s.events[sessionID] = append(s.events[sessionID], event)
+	s.publish(event)
+}
+
+func (s *Store) publish(event Event) {
+	s.subsMu.RLock()
+	global := make([]chan Event, 0, len(s.globalSubs))
+	for _, ch := range s.globalSubs {
+		global = append(global, ch)
+	}
+	session := make([]chan Event, 0)
+	if subs := s.sessionSubs[event.SessionID]; subs != nil {
+		session = make([]chan Event, 0, len(subs))
+		for _, ch := range subs {
+			session = append(session, ch)
+		}
+	}
+	s.subsMu.RUnlock()
+
+	for _, ch := range global {
+		nonBlockingSend(ch, event)
+	}
+	for _, ch := range session {
+		nonBlockingSend(ch, event)
+	}
+}
+
+func nonBlockingSend(ch chan Event, event Event) {
+	select {
+	case ch <- event:
+	default:
+	}
+}
+
+func needsAttention(annotation Annotation) bool {
+	if annotation.Status == "" || annotation.Status == StatusPending {
+		return true
+	}
+
+	if len(annotation.Thread) == 0 {
+		return false
+	}
+
+	last := annotation.Thread[len(annotation.Thread)-1]
+	return last.Role == "human"
+}
+
+func (s *Store) newID() string {
+	counter := atomic.AddUint64(&s.idCounter, 1)
+	bytes := make([]byte, 4)
+	if _, err := rand.Read(bytes); err != nil {
+		return fmt.Sprintf("%d-%d", time.Now().UnixMilli(), counter)
+	}
+	return fmt.Sprintf("%d-%s", time.Now().UnixMilli(), hex.EncodeToString(bytes))
+}

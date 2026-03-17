@@ -32,8 +32,25 @@ Commands:
 - `dismiss <annotation-id> --reason "..."`
 - `reply <annotation-id> --message "..."`
 - `watch [--session <id>] [--batch-window 10] [--timeout 120]`
+- `server <serve|start|stop|status>`
 
 Add `--json` to any command for machine-readable output.
+
+## Server process management
+
+```bash
+# Run in foreground
+agentation server serve --address 127.0.0.1:4747
+
+# Run in background
+agentation server start --background
+
+# Run attached to current shell
+agentation server start --foreground
+
+agentation server status
+agentation server stop
+```
 
 ## Environment variables
 
