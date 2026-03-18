@@ -148,8 +148,8 @@ func (c *Client) streamAnnotations(ctx context.Context, sessionID string, out ch
 		if strings.HasPrefix(line, ":") {
 			continue
 		}
-		if strings.HasPrefix(line, "data:") {
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if after, ok := strings.CutPrefix(line, "data:"); ok {
+			data := strings.TrimSpace(after)
 			dataLines = append(dataLines, data)
 		}
 	}

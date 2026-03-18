@@ -100,10 +100,3 @@ func buildTargetURL(endpoint string, routePath string, query url.Values) (string
 
 	return resolvedURL.String(), nil
 }
-
-func max(value int, minimum int) int {
-	if value < minimum {
-		return minimum
-	}
-	return value
-}

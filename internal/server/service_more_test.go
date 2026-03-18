@@ -335,11 +335,9 @@ func TestSessionAndGlobalEventHandlersDirect(t *testing.T) {
 	replayReq.SetPathValue("id", session.ID)
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		service.handleSessionEvents(cancelWriter, replayReq)
-	}()
+	})
 	time.Sleep(60 * time.Millisecond)
 	cancel()
 	wg.Wait()
@@ -361,11 +359,9 @@ func TestSessionAndGlobalEventHandlersDirect(t *testing.T) {
 	globalCtx, globalCancel := context.WithCancel(context.Background())
 	globalWriter := newBufferSSEWriter(false)
 	globalRequest := httptest.NewRequest(http.MethodGet, "/events?agent=true&domain=example.com", nil).WithContext(globalCtx)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		service.handleGlobalEvents(globalWriter, globalRequest)
-	}()
+	})
 	time.Sleep(60 * time.Millisecond)
 	globalCancel()
 	wg.Wait()

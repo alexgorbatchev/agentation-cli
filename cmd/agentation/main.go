@@ -103,8 +103,8 @@ func extractBaseURL(args []string) (string, []string, error) {
 			continue
 		}
 
-		if strings.HasPrefix(arg, "--base-url=") {
-			value := strings.TrimSpace(strings.TrimPrefix(arg, "--base-url="))
+		if after, ok := strings.CutPrefix(arg, "--base-url="); ok {
+			value := strings.TrimSpace(after)
 			if value == "" {
 				return "", nil, fmt.Errorf("--base-url requires a value")
 			}

@@ -265,7 +265,7 @@ func RunStop(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	for attempt := 0; attempt < 30; attempt++ {
+	for range 30 {
 		if !isProcessRunning(pid) {
 			_ = removePIDFile()
 			fmt.Fprintf(stdout, "agentation stopped (pid %d)\n", pid)
@@ -551,8 +551,8 @@ func findRunningPIDByScan() (int, bool) {
 		return 0, false
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(strings.TrimSpace(string(output)), "\n")
+	for line := range lines {
 		value := strings.TrimSpace(line)
 		if value == "" {
 			continue
