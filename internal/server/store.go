@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,16 +25,44 @@ type Store struct {
 	sessionSubs map[string]map[int64]chan Event
 
 	idCounter uint64
+
+	persistence persistenceBackend
 }
 
 func NewStore() *Store {
-	return &Store{
+	store := &Store{
 		sessions:    make(map[string]Session),
 		annotations: make(map[string]Annotation),
 		events:      make(map[string][]Event),
 		globalSubs:  make(map[int64]chan Event),
 		sessionSubs: make(map[string]map[int64]chan Event),
 	}
+
+	backend, err := newPersistenceBackend()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[Store] SQLite unavailable, using in-memory store: %v\n", err)
+		return store
+	}
+	if backend == nil {
+		fmt.Fprintln(os.Stderr, "[Store] Using in-memory store (AGENTATION_STORE=memory)")
+		return store
+	}
+
+	snapshot, err := backend.LoadSnapshot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[Store] Failed to load SQLite snapshot, using in-memory store: %v\n", err)
+		_ = backend.Close()
+		return store
+	}
+
+	store.sessions = snapshot.Sessions
+	store.annotations = snapshot.Annotations
+	store.events = snapshot.Events
+	store.sequence = snapshot.Sequence
+	store.persistence = backend
+
+	fmt.Fprintln(os.Stderr, "[Store] Using SQLite store")
+	return store
 }
 
 func (s *Store) CreateSession(url, projectID string) Session {
@@ -48,6 +77,7 @@ func (s *Store) CreateSession(url, projectID string) Session {
 		ProjectID: projectID,
 	}
 	s.sessions[session.ID] = session
+	s.persistSessionLocked(session)
 	s.emitLocked(EventSessionCreated, session.ID, session)
 	return session
 }
@@ -112,6 +142,7 @@ func (s *Store) AddAnnotation(sessionID string, annotation Annotation) (Annotati
 	}
 
 	s.annotations[annotation.ID] = annotation
+	s.persistAnnotationLocked(annotation)
 	s.emitLocked(EventAnnotationCreated, sessionID, annotation)
 	return annotation, true
 }
@@ -156,6 +187,7 @@ func (s *Store) UpdateAnnotation(id string, patch map[string]any) (Annotation, b
 
 	annotation.UpdatedAt = nowISO()
 	s.annotations[id] = annotation
+	s.persistAnnotationLocked(annotation)
 	s.emitLocked(EventAnnotationUpdated, annotation.SessionID, annotation)
 	return annotation, true
 }
@@ -170,6 +202,7 @@ func (s *Store) DeleteAnnotation(id string) (Annotation, bool) {
 	}
 
 	delete(s.annotations, id)
+	s.deleteAnnotationLocked(id)
 	s.emitLocked(EventAnnotationDeleted, annotation.SessionID, annotation)
 	return annotation, true
 }
@@ -192,6 +225,7 @@ func (s *Store) AddThreadMessage(annotationID, role, content string) (Annotation
 	annotation.Thread = append(annotation.Thread, message)
 	annotation.UpdatedAt = nowISO()
 	s.annotations[annotationID] = annotation
+	s.persistAnnotationLocked(annotation)
 	s.emitLocked(EventThreadMessage, annotation.SessionID, annotation)
 	return annotation, true
 }
@@ -308,6 +342,7 @@ func (s *Store) emitLocked(kind EventType, sessionID string, payload any) {
 		Payload:   payload,
 	}
 	s.events[sessionID] = append(s.events[sessionID], event)
+	s.persistEventLocked(event)
 	s.publish(event)
 }
 
@@ -331,6 +366,42 @@ func (s *Store) publish(event Event) {
 	}
 	for _, ch := range session {
 		nonBlockingSend(ch, event)
+	}
+}
+
+func (s *Store) persistSessionLocked(session Session) {
+	if s.persistence == nil {
+		return
+	}
+	if err := s.persistence.UpsertSession(session); err != nil {
+		fmt.Fprintf(os.Stderr, "[Store] Failed to persist session: %v\n", err)
+	}
+}
+
+func (s *Store) persistAnnotationLocked(annotation Annotation) {
+	if s.persistence == nil {
+		return
+	}
+	if err := s.persistence.UpsertAnnotation(annotation); err != nil {
+		fmt.Fprintf(os.Stderr, "[Store] Failed to persist annotation: %v\n", err)
+	}
+}
+
+func (s *Store) deleteAnnotationLocked(annotationID string) {
+	if s.persistence == nil {
+		return
+	}
+	if err := s.persistence.DeleteAnnotation(annotationID); err != nil {
+		fmt.Fprintf(os.Stderr, "[Store] Failed to delete annotation from SQLite: %v\n", err)
+	}
+}
+
+func (s *Store) persistEventLocked(event Event) {
+	if s.persistence == nil {
+		return
+	}
+	if err := s.persistence.InsertEvent(event); err != nil {
+		fmt.Fprintf(os.Stderr, "[Store] Failed to persist event: %v\n", err)
 	}
 }
 

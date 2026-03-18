@@ -17,6 +17,7 @@ import (
 )
 
 func TestHTTPAPIBranches(t *testing.T) {
+	t.Setenv("AGENTATION_STORE", "memory")
 	service := NewService("127.0.0.1:0", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	ts := httptest.NewServer(service.httpServer.Handler)
 	defer ts.Close()
@@ -76,6 +77,11 @@ func TestHTTPAPIBranches(t *testing.T) {
 	var session Session
 	if err := json.Unmarshal([]byte(body), &session); err != nil {
 		t.Fatalf("unmarshal session failed: %v", err)
+	}
+
+	resp, body = call(http.MethodGet, "/sessions", nil)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, session.ID) {
+		t.Fatalf("expected session list to include session, got %d %s", resp.StatusCode, body)
 	}
 
 	resp, body = call(http.MethodPost, "/sessions/missing/annotations", map[string]any{"comment": "c", "element": "button", "elementPath": "body > button"})
@@ -176,6 +182,7 @@ func TestHTTPAPIBranches(t *testing.T) {
 }
 
 func TestServiceUtilitiesAndSSEHelpers(t *testing.T) {
+	t.Setenv("AGENTATION_STORE", "memory")
 	service := NewService("127.0.0.1:0", slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if parseLastEventID("") != 0 || parseLastEventID("bad") != 0 || parseLastEventID("-1") != 0 || parseLastEventID("2") != 2 {
@@ -251,6 +258,7 @@ func TestServiceUtilitiesAndSSEHelpers(t *testing.T) {
 }
 
 func TestStreamFunctionsAndSync(t *testing.T) {
+	t.Setenv("AGENTATION_STORE", "memory")
 	service := NewService("127.0.0.1:0", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s1 := service.store.CreateSession("http://example.com/a", "")
 	s2 := service.store.CreateSession("http://other.com/b", "")
@@ -298,6 +306,7 @@ func TestStreamFunctionsAndSync(t *testing.T) {
 }
 
 func TestSessionAndGlobalEventHandlersDirect(t *testing.T) {
+	t.Setenv("AGENTATION_STORE", "memory")
 	service := NewService("127.0.0.1:0", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	session := service.store.CreateSession("http://example.com/page", "")
 	_, _ = service.store.AddAnnotation(session.ID, Annotation{Comment: "A", Element: "button", ElementPath: "body > button"})
@@ -367,6 +376,7 @@ func TestSessionAndGlobalEventHandlersDirect(t *testing.T) {
 }
 
 func TestListenAndShutdown(t *testing.T) {
+	t.Setenv("AGENTATION_STORE", "memory")
 	service := NewService("127.0.0.1:0", slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	errCh := make(chan error, 1)

@@ -55,3 +55,21 @@ agentation server stop
 ## Environment variables
 
 - `AGENTATION_HTTP_URL` (default: `http://localhost:4747`)
+- `AGENTATION_STORE` (`sqlite` by default, set to `memory` for in-memory mode)
+- `AGENTATION_DB_PATH` (explicit SQLite DB path override)
+- `XDG_DATA_HOME` (used for default SQLite location when `AGENTATION_DB_PATH` is unset)
+- `AGENTATION_SERVER_PID_FILE` (override PID file for `server start/stop/status`)
+- `AGENTATION_SERVER_LOG_FILE` (override log file for background server mode)
+
+## SQLite storage location
+
+By default, data is stored in SQLite at:
+
+- `$XDG_DATA_HOME/agentation/store.db` (if `XDG_DATA_HOME` is set)
+- otherwise `~/.local/share/agentation/store.db`
+
+You can override the DB file completely with:
+
+```bash
+AGENTATION_DB_PATH=/absolute/path/store.db agentation server serve
+```

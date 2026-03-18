@@ -1,10 +1,13 @@
 package server
 
 import (
+	"fmt"
+	"path/filepath"
 	"testing"
 )
 
 func TestStoreCoreFlows(t *testing.T) {
+	t.Setenv("AGENTATION_STORE", "memory")
 	store := NewStore()
 
 	if _, ok := store.GetSession("missing"); ok {
@@ -125,6 +128,7 @@ func TestStoreCoreFlows(t *testing.T) {
 }
 
 func TestStoreSubscriptionsAndHelpers(t *testing.T) {
+	t.Setenv("AGENTATION_STORE", "memory")
 	store := NewStore()
 	session := store.CreateSession("http://example.com", "")
 
@@ -176,4 +180,83 @@ func TestStoreSubscriptionsAndHelpers(t *testing.T) {
 	if id := store.newID(); id == "" {
 		t.Fatal("newID should return non-empty id")
 	}
+}
+
+func TestStoreSQLitePersistence(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "store.db")
+	t.Setenv("AGENTATION_STORE", "sqlite")
+	t.Setenv("AGENTATION_DB_PATH", dbPath)
+
+	store := NewStore()
+	session := store.CreateSession("http://example.com/persisted", "project-1")
+	annotation, ok := store.AddAnnotation(session.ID, Annotation{Comment: "Persist me", Element: "button", ElementPath: "body > button"})
+	if !ok {
+		t.Fatal("AddAnnotation should succeed")
+	}
+	_, ok = store.AddThreadMessage(annotation.ID, "human", "Hello")
+	if !ok {
+		t.Fatal("AddThreadMessage should succeed")
+	}
+	store.EmitActionRequested(session.ID, ActionRequest{SessionID: session.ID, Output: "do persisted work"})
+
+	reloaded := NewStore()
+	sessions := reloaded.ListSessions()
+	if len(sessions) == 0 {
+		t.Fatal("expected persisted sessions after reload")
+	}
+	_, found := reloaded.GetAnnotation(annotation.ID)
+	if !found {
+		t.Fatal("expected persisted annotation after reload")
+	}
+	events := reloaded.GetEventsSince(session.ID, 0)
+	if len(events) == 0 {
+		t.Fatal("expected persisted events after reload")
+	}
+}
+
+func TestStorePersistenceHelpersWithFailingBackend(t *testing.T) {
+	t.Setenv("AGENTATION_STORE", "memory")
+	store := NewStore()
+	store.persistence = failingBackend{}
+
+	store.persistSessionLocked(Session{ID: "s1", URL: "http://example.com", Status: "active", CreatedAt: nowISO()})
+	store.persistAnnotationLocked(Annotation{ID: "a1", SessionID: "s1", Comment: "x", Element: "button", ElementPath: "body > button"})
+	store.deleteAnnotationLocked("a1")
+	store.persistEventLocked(Event{Sequence: 1, SessionID: "s1", Type: EventAnnotationCreated, Payload: map[string]any{"id": "a1"}})
+}
+
+func TestStoreNewStoreFallbackOnPersistenceError(t *testing.T) {
+	t.Setenv("AGENTATION_STORE", "sqlite")
+	t.Setenv("AGENTATION_DB_PATH", t.TempDir())
+
+	store := NewStore()
+	if store.persistence != nil {
+		t.Fatal("expected in-memory fallback when SQLite cannot initialize")
+	}
+}
+
+type failingBackend struct{}
+
+func (f failingBackend) LoadSnapshot() (storeSnapshot, error) {
+	return storeSnapshot{}, fmt.Errorf("load error")
+}
+
+func (f failingBackend) UpsertSession(session Session) error {
+	return fmt.Errorf("session error")
+}
+
+func (f failingBackend) UpsertAnnotation(annotation Annotation) error {
+	return fmt.Errorf("annotation error")
+}
+
+func (f failingBackend) DeleteAnnotation(annotationID string) error {
+	return fmt.Errorf("delete error")
+}
+
+func (f failingBackend) InsertEvent(event Event) error {
+	return fmt.Errorf("event error")
+}
+
+func (f failingBackend) Close() error {
+	return nil
 }

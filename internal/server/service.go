@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -24,6 +26,10 @@ type Service struct {
 
 	activeListeners int64
 	agentListeners  int64
+
+	shutdownCtx    context.Context
+	shutdownCancel context.CancelFunc
+	shutdownOnce   sync.Once
 }
 
 func NewService(address string, logger *slog.Logger) *Service {
@@ -31,9 +37,13 @@ func NewService(address string, logger *slog.Logger) *Service {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+
 	service := &Service{
-		store: NewStore(),
-		log:   logger,
+		store:          NewStore(),
+		log:            logger,
+		shutdownCtx:    shutdownCtx,
+		shutdownCancel: shutdownCancel,
 	}
 
 	mux := http.NewServeMux()
@@ -67,7 +77,25 @@ func (s *Service) ListenAndServe() error {
 }
 
 func (s *Service) Shutdown(ctx context.Context) error {
-	return s.httpServer.Shutdown(ctx)
+	s.shutdownOnce.Do(func() {
+		s.shutdownCancel()
+	})
+
+	err := s.httpServer.Shutdown(ctx)
+	if err == nil {
+		return nil
+	}
+
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		s.log.Warn("graceful shutdown timed out, forcing server close", "error", err)
+		closeErr := s.httpServer.Close()
+		if closeErr != nil && !errors.Is(closeErr, http.ErrServerClosed) {
+			return closeErr
+		}
+		return nil
+	}
+
+	return err
 }
 
 func (s *Service) withCORS(next http.Handler) http.Handler {
@@ -117,6 +145,7 @@ func (s *Service) handleCreateSession(writer http.ResponseWriter, request *http.
 	}
 
 	session := s.store.CreateSession(strings.TrimSpace(input.URL), strings.TrimSpace(input.ProjectID))
+	s.log.Info("frontend session connected", "sessionId", session.ID, "url", session.URL)
 	writeJSON(writer, http.StatusCreated, session)
 }
 
@@ -127,6 +156,8 @@ func (s *Service) handleGetSession(writer http.ResponseWriter, request *http.Req
 		writeError(writer, http.StatusNotFound, "Session not found")
 		return
 	}
+
+	s.log.Info("frontend session loaded", "sessionId", session.ID, "annotations", len(session.Annotations))
 	writeJSON(writer, http.StatusOK, session)
 }
 
@@ -149,6 +180,7 @@ func (s *Service) handleAddAnnotation(writer http.ResponseWriter, request *http.
 		return
 	}
 
+	s.log.Info("frontend annotation received", "sessionId", created.SessionID, "annotationId", created.ID, "element", created.Element)
 	writeJSON(writer, http.StatusCreated, created)
 }
 
@@ -286,12 +318,17 @@ func (s *Service) handleSessionEvents(writer http.ResponseWriter, request *http.
 		return
 	}
 
+	clientType := "frontend"
 	atomic.AddInt64(&s.activeListeners, 1)
 	defer atomic.AddInt64(&s.activeListeners, -1)
 	if isAgent {
+		clientType = "agent"
 		atomic.AddInt64(&s.agentListeners, 1)
 		defer atomic.AddInt64(&s.agentListeners, -1)
 	}
+
+	s.log.Info("sse connected", "sessionId", sessionID, "client", clientType)
+	defer s.log.Info("sse disconnected", "sessionId", sessionID, "client", clientType)
 
 	lastID := parseLastEventID(request.Header.Get("Last-Event-ID"))
 	if lastID > 0 {
@@ -345,6 +382,8 @@ func (s *Service) streamEvents(ctx context.Context, writer http.ResponseWriter, 
 			}
 		case <-ctx.Done():
 			return
+		case <-s.shutdownCtx.Done():
+			return
 		}
 	}
 }
@@ -367,6 +406,8 @@ func (s *Service) streamGlobalEvents(ctx context.Context, writer http.ResponseWr
 				return
 			}
 		case <-ctx.Done():
+			return
+		case <-s.shutdownCtx.Done():
 			return
 		}
 	}

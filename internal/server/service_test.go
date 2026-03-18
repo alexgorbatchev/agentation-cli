@@ -11,6 +11,7 @@ import (
 )
 
 func TestSessionAndPendingFlow(t *testing.T) {
+	t.Setenv("AGENTATION_STORE", "memory")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	service := NewService("127.0.0.1:0", logger)
 	testServer := httptest.NewServer(service.httpServer.Handler)
