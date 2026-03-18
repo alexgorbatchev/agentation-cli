@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -13,8 +12,6 @@ import (
 
 	"github.com/benjitaylor/agentation/cli/internal/api"
 	"github.com/benjitaylor/agentation/cli/internal/lifecycle"
-	"github.com/benjitaylor/agentation/cli/internal/routerctl"
-	"github.com/benjitaylor/agentation/cli/internal/serverctl"
 )
 
 func main() {
@@ -22,111 +19,103 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	cfg, remaining, err := parseGlobalFlags(args, stderr)
-	if err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			printUsage(stdout)
-			return 0
-		}
-		fmt.Fprintf(stderr, "error: %v\n", err)
-		return 1
-	}
-
-	if len(remaining) == 0 {
+	if len(args) == 0 {
 		printUsage(stdout)
 		return 0
 	}
 
-	client := api.NewClient(cfg.baseURL)
+	command := args[0]
+	commandArgs := args[1:]
 	ctx := context.Background()
-
-	command := remaining[0]
-	commandArgs := remaining[1:]
 
 	switch command {
 	case "sessions":
-		if err := runSessions(ctx, client, commandArgs, stdout, stderr); err != nil {
-			fmt.Fprintf(stderr, "error: %v\n", err)
-			return 1
-		}
+		return runWithAPICommand(ctx, commandArgs, stdout, stderr, runSessions)
 	case "session":
-		if err := runSession(ctx, client, commandArgs, stdout, stderr); err != nil {
-			fmt.Fprintf(stderr, "error: %v\n", err)
-			return 1
-		}
+		return runWithAPICommand(ctx, commandArgs, stdout, stderr, runSession)
 	case "pending":
-		if err := runPending(ctx, client, commandArgs, stdout, stderr); err != nil {
-			fmt.Fprintf(stderr, "error: %v\n", err)
-			return 1
-		}
+		return runWithAPICommand(ctx, commandArgs, stdout, stderr, runPending)
 	case "ack":
-		if err := runAcknowledge(ctx, client, commandArgs, stdout, stderr); err != nil {
-			fmt.Fprintf(stderr, "error: %v\n", err)
-			return 1
-		}
+		return runWithAPICommand(ctx, commandArgs, stdout, stderr, runAcknowledge)
 	case "resolve":
-		if err := runResolve(ctx, client, commandArgs, stdout, stderr); err != nil {
-			fmt.Fprintf(stderr, "error: %v\n", err)
-			return 1
-		}
+		return runWithAPICommand(ctx, commandArgs, stdout, stderr, runResolve)
 	case "dismiss":
-		if err := runDismiss(ctx, client, commandArgs, stdout, stderr); err != nil {
-			fmt.Fprintf(stderr, "error: %v\n", err)
-			return 1
-		}
+		return runWithAPICommand(ctx, commandArgs, stdout, stderr, runDismiss)
 	case "reply":
-		if err := runReply(ctx, client, commandArgs, stdout, stderr); err != nil {
-			fmt.Fprintf(stderr, "error: %v\n", err)
-			return 1
-		}
+		return runWithAPICommand(ctx, commandArgs, stdout, stderr, runReply)
 	case "watch":
-		if err := runWatch(ctx, client, commandArgs, stdout, stderr); err != nil {
-			fmt.Fprintf(stderr, "error: %v\n", err)
-			return 1
-		}
+		return runWithAPICommand(ctx, commandArgs, stdout, stderr, runWatch)
 	case "start":
 		return lifecycle.RunStart(commandArgs, stdout, stderr)
 	case "stop":
 		return lifecycle.RunStop(commandArgs, stdout, stderr)
 	case "status":
 		return lifecycle.RunStatus(commandArgs, stdout, stderr)
-	case "__serve-server":
-		return serverctl.Run(append([]string{"serve"}, commandArgs...), stdout, stderr)
-	case "__serve-router":
-		return routerctl.Run(append([]string{"serve"}, commandArgs...), stdout, stderr)
+	case "__serve-stack":
+		return lifecycle.RunServe(commandArgs, stdout, stderr)
 	case "help", "--help", "-h":
 		printUsage(stdout)
+		return 0
 	default:
 		fmt.Fprintf(stderr, "error: unknown command %q\n\n", command)
 		printUsage(stderr)
+		return 1
+	}
+}
+
+type apiCommandRunner func(context.Context, *api.Client, []string, io.Writer, io.Writer) error
+
+func runWithAPICommand(ctx context.Context, args []string, stdout, stderr io.Writer, runner apiCommandRunner) int {
+	baseURL, remainingArgs, err := extractBaseURL(args)
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return 1
+	}
+
+	client := api.NewClient(baseURL)
+	if err := runner(ctx, client, remainingArgs, stdout, stderr); err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
 
 	return 0
 }
 
-type globalConfig struct {
-	baseURL string
-}
-
-func parseGlobalFlags(args []string, stderr io.Writer) (globalConfig, []string, error) {
-	cfg := globalConfig{
-		baseURL: strings.TrimSpace(os.Getenv("AGENTATION_HTTP_URL")),
+func extractBaseURL(args []string) (string, []string, error) {
+	baseURL := strings.TrimSpace(os.Getenv("AGENTATION_BASE_URL"))
+	if baseURL == "" {
+		baseURL = "http://localhost:4747"
 	}
 
-	flags := flag.NewFlagSet("agentation", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	flags.StringVar(&cfg.baseURL, "base-url", cfg.baseURL, "Agentation HTTP base URL (default: http://localhost:4747)")
+	remaining := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--base-url" {
+			if i+1 >= len(args) {
+				return "", nil, fmt.Errorf("--base-url requires a value")
+			}
+			i++
+			value := strings.TrimSpace(args[i])
+			if value == "" || strings.HasPrefix(value, "-") {
+				return "", nil, fmt.Errorf("--base-url requires a valid URL value")
+			}
+			baseURL = value
+			continue
+		}
 
-	if err := flags.Parse(args); err != nil {
-		return globalConfig{}, nil, err
+		if strings.HasPrefix(arg, "--base-url=") {
+			value := strings.TrimSpace(strings.TrimPrefix(arg, "--base-url="))
+			if value == "" {
+				return "", nil, fmt.Errorf("--base-url requires a value")
+			}
+			baseURL = value
+			continue
+		}
+
+		remaining = append(remaining, arg)
 	}
 
-	if strings.TrimSpace(cfg.baseURL) == "" {
-		cfg.baseURL = "http://localhost:4747"
-	}
-
-	return cfg, flags.Args(), nil
+	return baseURL, remaining, nil
 }
 
 func runSessions(ctx context.Context, client *api.Client, args []string, stdout, stderr io.Writer) error {
@@ -379,29 +368,28 @@ func writeJSON(writer io.Writer, value any) error {
 func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "agentation - CLI companion for Agentation HTTP server")
 	fmt.Fprintln(writer)
-	fmt.Fprintln(writer, "Global options:")
-	fmt.Fprintln(writer, "  --base-url <url>   Agentation HTTP base URL (default: http://localhost:4747)")
-	fmt.Fprintln(writer)
 	fmt.Fprintln(writer, "Commands:")
-	fmt.Fprintln(writer, "  sessions                         List sessions")
-	fmt.Fprintln(writer, "  session <session-id>             Get session with annotations")
-	fmt.Fprintln(writer, "  pending [--session <id>]         Get pending annotations")
-	fmt.Fprintln(writer, "  ack <annotation-id>              Mark annotation acknowledged")
-	fmt.Fprintln(writer, "  resolve <annotation-id>          Resolve annotation")
-	fmt.Fprintln(writer, "  dismiss <annotation-id>          Dismiss annotation")
-	fmt.Fprintln(writer, "  reply <annotation-id>            Add thread reply")
-	fmt.Fprintln(writer, "  watch                            Wait for new annotations/thread replies")
-	fmt.Fprintln(writer, "  start                            Start local services (server by default)")
-	fmt.Fprintln(writer, "  stop                             Stop local services")
-	fmt.Fprintln(writer, "  status                           Show local service status")
+	fmt.Fprintln(writer, "  sessions [--base-url <url>]                         List sessions")
+	fmt.Fprintln(writer, "  session [--base-url <url>] <session-id>             Get session with annotations")
+	fmt.Fprintln(writer, "  pending [--base-url <url>] [--session <id>]         Get pending annotations")
+	fmt.Fprintln(writer, "  ack [--base-url <url>] <annotation-id>              Mark annotation acknowledged")
+	fmt.Fprintln(writer, "  resolve [--base-url <url>] <annotation-id>          Resolve annotation")
+	fmt.Fprintln(writer, "  dismiss [--base-url <url>] <annotation-id>          Dismiss annotation")
+	fmt.Fprintln(writer, "  reply [--base-url <url>] <annotation-id>            Add thread reply")
+	fmt.Fprintln(writer, "  watch [--base-url <url>]                            Wait for new annotations/thread replies")
+	fmt.Fprintln(writer, "  start                                                Start local services (single PID)")
+	fmt.Fprintln(writer, "  stop                                                 Stop local services (single PID)")
+	fmt.Fprintln(writer, "  status                                               Show local service status")
 	fmt.Fprintln(writer)
 	fmt.Fprintln(writer, "Examples:")
-	fmt.Fprintln(writer, "  agentation pending --json")
-	fmt.Fprintln(writer, "  agentation ack ann_123")
+	fmt.Fprintln(writer, "  AGENTATION_BASE_URL=http://127.0.0.1:4747 agentation pending --json")
+	fmt.Fprintln(writer, "  agentation pending --base-url http://127.0.0.1:4747 --json")
+	fmt.Fprintln(writer, "  agentation ack --base-url http://127.0.0.1:4747 ann_123")
 	fmt.Fprintln(writer, "  agentation resolve ann_123 --summary \"Updated spacing\"")
 	fmt.Fprintln(writer, "  agentation watch --batch-window 5 --timeout 120 --json")
 	fmt.Fprintln(writer, "  agentation start")
-	fmt.Fprintln(writer, "  AGENTATION_SERVER_ADDR=127.0.0.1:5757 agentation start")
-	fmt.Fprintln(writer, "  AGENTATION_ROUTER_ADDR=127.0.0.1:8787 agentation start")
-	fmt.Fprintln(writer, "  agentation start --server --server-addr 127.0.0.1:4747 --router --router-addr 127.0.0.1:8787")
+	fmt.Fprintln(writer, "  AGENTATION_SERVER_ADDR=127.0.0.1:5757 AGENTATION_ROUTER_ADDR=127.0.0.1:8787 agentation start")
+	fmt.Fprintln(writer, "  AGENTATION_SERVER_ADDR=0 agentation start")
+	fmt.Fprintln(writer, "  AGENTATION_ROUTER_ADDR=0 agentation start")
+	fmt.Fprintln(writer, "  agentation start --server-addr 127.0.0.1:4747 --router-addr 127.0.0.1:8787")
 }

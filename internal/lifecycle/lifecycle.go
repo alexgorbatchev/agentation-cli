@@ -1,33 +1,45 @@
 package lifecycle
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
+	"net/http"
 	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
-	"github.com/benjitaylor/agentation/cli/internal/routerctl"
-	"github.com/benjitaylor/agentation/cli/internal/serverctl"
+	routerconfig "github.com/benjitaylor/agentation/cli/internal/router/config"
+	routerhttp "github.com/benjitaylor/agentation/cli/internal/router/http"
+	routerpkg "github.com/benjitaylor/agentation/cli/internal/router/router"
+	routerstore "github.com/benjitaylor/agentation/cli/internal/router/store"
+	"github.com/benjitaylor/agentation/cli/internal/server"
 )
 
 const (
 	defaultServerAddress = "127.0.0.1:4747"
 	defaultRouterAddress = "127.0.0.1:8787"
+	shutdownTimeout      = 5 * time.Second
 )
+
+type serveConfig struct {
+	serverAddr   string
+	routerAddr   string
+	enableServer bool
+	enableRouter bool
+}
 
 type startConfig struct {
 	foreground bool
-	server     bool
-	serverAddr string
-	router     bool
-	routerAddr string
-}
-
-type controlConfig struct {
-	server bool
-	router bool
+	serve      serveConfig
 }
 
 func RunStart(args []string, stdout, stderr io.Writer) int {
@@ -40,44 +52,188 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	if pid, ok := loadRunningPID(); ok {
+		fmt.Fprintf(stdout, "agentation already running (pid %d)\n", pid)
+		return 0
+	}
+
 	if cfg.foreground {
-		if cfg.server && cfg.router {
-			fmt.Fprintln(stderr, "error: --foreground cannot run server and router together; use --background")
+		return runServe(cfg.serve, stdout, stderr)
+	}
+
+	executablePath, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(stderr, "failed to resolve executable path: %v\n", err)
+		return 1
+	}
+
+	stackLogPath := stackLogFilePath()
+	if err := os.MkdirAll(filepath.Dir(stackLogPath), 0o755); err != nil {
+		fmt.Fprintf(stderr, "failed to create log directory: %v\n", err)
+		return 1
+	}
+
+	stackLogFile, err := os.OpenFile(stackLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		fmt.Fprintf(stderr, "failed to open log file: %v\n", err)
+		return 1
+	}
+	defer stackLogFile.Close()
+
+	commandArgs := []string{
+		"__serve-stack",
+		"--server-addr", cfg.serve.serverAddr,
+		"--router-addr", cfg.serve.routerAddr,
+	}
+	command := exec.Command(executablePath, commandArgs...)
+	command.Stdout = stackLogFile
+	command.Stderr = stackLogFile
+
+	if err := command.Start(); err != nil {
+		fmt.Fprintf(stderr, "failed to start agentation: %v\n", err)
+		return 1
+	}
+
+	pid := command.Process.Pid
+	if err := writePID(pid); err != nil {
+		fmt.Fprintf(stderr, "failed to write pid file: %v\n", err)
+		_ = command.Process.Kill()
+		return 1
+	}
+
+	time.Sleep(250 * time.Millisecond)
+	if !isProcessRunning(pid) {
+		_ = removePIDFile()
+		fmt.Fprintln(stderr, "agentation failed to stay running")
+		return 1
+	}
+
+	fmt.Fprintf(stdout, "agentation started in background (pid %d)\n", pid)
+	fmt.Fprintf(stdout, "log: %s\n", stackLogPath)
+	if cfg.serve.enableServer {
+		fmt.Fprintf(stdout, "server log: %s\n", serverLogFilePath())
+	}
+	if cfg.serve.enableRouter {
+		fmt.Fprintf(stdout, "router log: %s\n", routerLogFilePath())
+	}
+
+	return 0
+}
+
+func RunServe(args []string, stdout, stderr io.Writer) int {
+	cfg, err := parseServeFlags(args, stderr)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		fmt.Fprintf(stderr, "failed to parse serve flags: %v\n", err)
+		return 1
+	}
+
+	return runServe(cfg, stdout, stderr)
+}
+
+func runServe(cfg serveConfig, stdout, stderr io.Writer) int {
+	if !cfg.enableServer && !cfg.enableRouter {
+		fmt.Fprintln(stderr, "nothing to serve: both server and router are disabled")
+		return 1
+	}
+
+	serverWriter, serverCloser, err := openServiceLogWriter(serverLogFilePath(), stdout)
+	if err != nil {
+		fmt.Fprintf(stderr, "failed to open server log file: %v\n", err)
+		return 1
+	}
+	if serverCloser != nil {
+		defer serverCloser.Close()
+	}
+
+	routerWriter, routerCloser, err := openServiceLogWriter(routerLogFilePath(), stdout)
+	if err != nil {
+		fmt.Fprintf(stderr, "failed to open router log file: %v\n", err)
+		return 1
+	}
+	if routerCloser != nil {
+		defer routerCloser.Close()
+	}
+
+	signalContext, stopSignal := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignal()
+
+	serveErrors := make(chan error, 2)
+
+	var serverService *server.Service
+	if cfg.enableServer {
+		serverLogger := slog.New(slog.NewTextHandler(serverWriter, &slog.HandlerOptions{Level: slog.LevelInfo}))
+		serverService = server.NewService(cfg.serverAddr, serverLogger)
+
+		go func() {
+			err := serverService.ListenAndServe()
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				serveErrors <- fmt.Errorf("server failed: %w", err)
+			}
+		}()
+	} else {
+		fmt.Fprintln(stdout, "agentation server disabled")
+	}
+
+	var routerService *http.Server
+	if cfg.enableRouter {
+		routerCfg, cfgErr := routerconfig.Load([]string{"--address", cfg.routerAddr}, stderr)
+		if cfgErr != nil {
+			fmt.Fprintf(stderr, "failed to build router config: %v\n", cfgErr)
 			return 1
 		}
 
-		if cfg.server {
-			return serverctl.Run([]string{"serve", "--address", cfg.serverAddr}, stdout, stderr)
-		}
+		routerLogger := slog.New(slog.NewTextHandler(routerWriter, &slog.HandlerOptions{Level: slog.LevelInfo}))
+		registry := routerstore.NewRegistry(routerCfg.SessionStaleAfter)
+		forwarder := routerpkg.NewForwarder(routerCfg.ForwardTimeout)
+		routerService = routerhttp.NewServer(routerCfg, routerLogger, registry, forwarder)
 
-		return routerctl.Run([]string{"serve", "--address", cfg.routerAddr}, stdout, stderr)
-	}
-
-	startedServer := false
-	if cfg.server {
-		code := serverctl.Run([]string{"start", "--background", "--address", cfg.serverAddr}, stdout, stderr)
-		if code != 0 {
-			return code
-		}
-		startedServer = true
-	}
-
-	if cfg.router {
-		code := routerctl.Run([]string{"start", "--background", "--address", cfg.routerAddr}, stdout, stderr)
-		if code != 0 {
-			if startedServer {
-				_ = serverctl.Run([]string{"stop"}, io.Discard, io.Discard)
+		go func() {
+			err := routerService.ListenAndServe()
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				serveErrors <- fmt.Errorf("router failed: %w", err)
 			}
-			return code
+		}()
+	} else {
+		fmt.Fprintln(stdout, "agentation router disabled")
+	}
+
+	select {
+	case <-signalContext.Done():
+	case err := <-serveErrors:
+		fmt.Fprintf(stderr, "%v\n", err)
+		return 1
+	}
+
+	shutdownContext, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	shutdownErr := false
+	if routerService != nil {
+		if err := routerService.Shutdown(shutdownContext); err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintf(stderr, "agentation router shutdown failed: %v\n", err)
+			shutdownErr = true
 		}
+	}
+
+	if serverService != nil {
+		if err := serverService.Shutdown(shutdownContext); err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintf(stderr, "agentation server shutdown failed: %v\n", err)
+			shutdownErr = true
+		}
+	}
+
+	if shutdownErr {
+		return 1
 	}
 
 	return 0
 }
 
 func RunStop(args []string, stdout, stderr io.Writer) int {
-	cfg, err := parseControlFlags("stop", args, stderr)
-	if err != nil {
+	if err := parseNoArgCommand("stop", args, stderr); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
@@ -85,27 +241,51 @@ func RunStop(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	exitCode := 0
-	if cfg.router {
-		code := routerctl.Run([]string{"stop"}, stdout, stderr)
-		if code != 0 {
-			exitCode = 1
+	pid, err := readPID()
+	if err != nil || !isProcessRunning(pid) {
+		fallbackPID, ok := findRunningPIDByScan()
+		if !ok {
+			_ = removePIDFile()
+			fmt.Fprintln(stdout, "agentation is not running")
+			return 0
+		}
+		pid = fallbackPID
+	}
+
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		fmt.Fprintf(stderr, "failed to find process: %v\n", err)
+		return 1
+	}
+
+	if err := process.Signal(os.Interrupt); err != nil {
+		if killErr := process.Kill(); killErr != nil {
+			fmt.Fprintf(stderr, "failed to stop agentation: %v\n", killErr)
+			return 1
 		}
 	}
 
-	if cfg.server {
-		code := serverctl.Run([]string{"stop"}, stdout, stderr)
-		if code != 0 {
-			exitCode = 1
+	for attempt := 0; attempt < 30; attempt++ {
+		if !isProcessRunning(pid) {
+			_ = removePIDFile()
+			fmt.Fprintf(stdout, "agentation stopped (pid %d)\n", pid)
+			return 0
 		}
+		time.Sleep(100 * time.Millisecond)
 	}
 
-	return exitCode
+	if err := process.Kill(); err != nil {
+		fmt.Fprintf(stderr, "failed to kill agentation: %v\n", err)
+		return 1
+	}
+
+	_ = removePIDFile()
+	fmt.Fprintf(stdout, "agentation stopped (pid %d)\n", pid)
+	return 0
 }
 
 func RunStatus(args []string, stdout, stderr io.Writer) int {
-	cfg, err := parseControlFlags("status", args, stderr)
-	if err != nil {
+	if err := parseNoArgCommand("status", args, stderr); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
@@ -113,49 +293,42 @@ func RunStatus(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	exitCode := 0
-	if cfg.server {
-		code := serverctl.Run([]string{"status"}, stdout, stderr)
-		if code != 0 {
-			exitCode = 1
+	pid, err := readPID()
+	if err != nil || !isProcessRunning(pid) {
+		fallbackPID, ok := findRunningPIDByScan()
+		if !ok {
+			_ = removePIDFile()
+			fmt.Fprintln(stdout, "agentation not running")
+			return 1
 		}
+		pid = fallbackPID
+		_ = writePID(pid)
 	}
 
-	if cfg.router {
-		code := routerctl.Run([]string{"status"}, stdout, stderr)
-		if code != 0 {
-			exitCode = 1
-		}
-	}
-
-	return exitCode
+	fmt.Fprintf(stdout, "agentation running (pid %d)\n", pid)
+	return 0
 }
 
 func parseStartFlags(args []string, stderr io.Writer) (startConfig, error) {
-	serverAddrFromEnv := strings.TrimSpace(os.Getenv("AGENTATION_SERVER_ADDR"))
-	routerAddrFromEnv := strings.TrimSpace(os.Getenv("AGENTATION_ROUTER_ADDR"))
-
 	flags := flag.NewFlagSet("agentation start", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() {
-		fmt.Fprintln(stderr, "Usage: agentation start [--server] [--server-addr host:port] [--router] [--router-addr host:port] [--foreground|--background]")
+		fmt.Fprintln(stderr, "Usage: agentation start [--server-addr host:port|0] [--router-addr host:port|0] [--foreground|--background]")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "Options:")
 		flags.PrintDefaults()
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "Examples:")
 		fmt.Fprintln(stderr, "  agentation start")
-		fmt.Fprintln(stderr, "  AGENTATION_SERVER_ADDR=127.0.0.1:5757 agentation start")
-		fmt.Fprintln(stderr, "  AGENTATION_ROUTER_ADDR=127.0.0.1:8787 agentation start")
-		fmt.Fprintln(stderr, "  agentation start --server --server-addr 127.0.0.1:4747 --router --router-addr 127.0.0.1:8787")
+		fmt.Fprintln(stderr, "  AGENTATION_SERVER_ADDR=0 agentation start")
+		fmt.Fprintln(stderr, "  AGENTATION_ROUTER_ADDR=0 agentation start")
+		fmt.Fprintln(stderr, "  agentation start --server-addr 127.0.0.1:4747 --router-addr 127.0.0.1:8787")
 	}
 
-	server := flags.Bool("server", false, "Start Agentation HTTP server")
-	serverAddr := flags.String("server-addr", "", "HTTP server address (default: AGENTATION_SERVER_ADDR or 127.0.0.1:4747)")
-	router := flags.Bool("router", false, "Start Agentation router")
-	routerAddr := flags.String("router-addr", "", "Router address (default: AGENTATION_ROUTER_ADDR or 127.0.0.1:8787)")
-	foreground := flags.Bool("foreground", false, "Run selected service in foreground")
-	background := flags.Bool("background", false, "Run selected service in background (default)")
+	serverAddrFlag := flags.String("server-addr", "", "Server address (default: AGENTATION_SERVER_ADDR or 127.0.0.1:4747; use 0 to disable)")
+	routerAddrFlag := flags.String("router-addr", "", "Router address (default: AGENTATION_ROUTER_ADDR or 127.0.0.1:8787; use 0 to disable)")
+	foreground := flags.Bool("foreground", false, "Run in foreground")
+	background := flags.Bool("background", false, "Run in background (default)")
 
 	if err := flags.Parse(args); err != nil {
 		return startConfig{}, err
@@ -167,68 +340,249 @@ func parseStartFlags(args []string, stderr io.Writer) (startConfig, error) {
 		return startConfig{}, fmt.Errorf("--foreground and --background cannot be used together")
 	}
 
-	serverAddrValue := strings.TrimSpace(*serverAddr)
-	routerAddrValue := strings.TrimSpace(*routerAddr)
-
-	hasServiceSelection := *server || *router || serverAddrValue != "" || routerAddrValue != ""
-
-	cfg := startConfig{}
-	if hasServiceSelection {
-		cfg.server = *server || serverAddrValue != ""
-		cfg.router = *router || routerAddrValue != ""
-	} else {
-		cfg.server = true
-		cfg.router = routerAddrFromEnv != ""
+	serve, err := resolveServeConfig(strings.TrimSpace(*serverAddrFlag), strings.TrimSpace(*routerAddrFlag))
+	if err != nil {
+		return startConfig{}, err
 	}
 
-	if !cfg.server && !cfg.router {
-		return startConfig{}, fmt.Errorf("no service selected; pass --server or --router")
+	return startConfig{
+		foreground: *foreground,
+		serve:      serve,
+	}, nil
+}
+
+func parseServeFlags(args []string, stderr io.Writer) (serveConfig, error) {
+	flags := flag.NewFlagSet("agentation __serve-stack", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+
+	serverAddrFlag := flags.String("server-addr", "", "Server address")
+	routerAddrFlag := flags.String("router-addr", "", "Router address")
+
+	if err := flags.Parse(args); err != nil {
+		return serveConfig{}, err
+	}
+	if flags.NArg() != 0 {
+		return serveConfig{}, fmt.Errorf("serve does not accept positional arguments")
 	}
 
-	if cfg.server {
-		cfg.serverAddr = defaultServerAddress
-		if serverAddrFromEnv != "" {
-			cfg.serverAddr = serverAddrFromEnv
-		}
-		if serverAddrValue != "" {
-			cfg.serverAddr = serverAddrValue
-		}
+	return resolveServeConfig(strings.TrimSpace(*serverAddrFlag), strings.TrimSpace(*routerAddrFlag))
+}
+
+func resolveServeConfig(serverAddrFlag string, routerAddrFlag string) (serveConfig, error) {
+	serverAddr := resolveAddress(serverAddrFlag, strings.TrimSpace(os.Getenv("AGENTATION_SERVER_ADDR")), defaultServerAddress)
+	routerAddr := resolveAddress(routerAddrFlag, firstNonEmptyEnv("AGENTATION_ROUTER_ADDR", "AGENTATION_ROUTER_ADDRESS"), defaultRouterAddress)
+
+	cfg := serveConfig{
+		serverAddr:   serverAddr,
+		routerAddr:   routerAddr,
+		enableServer: serverAddr != "0",
+		enableRouter: routerAddr != "0",
 	}
 
-	if cfg.router {
-		cfg.routerAddr = defaultRouterAddress
-		if routerAddrFromEnv != "" {
-			cfg.routerAddr = routerAddrFromEnv
-		}
-		if routerAddrValue != "" {
-			cfg.routerAddr = routerAddrValue
-		}
+	if !cfg.enableServer && !cfg.enableRouter {
+		return serveConfig{}, fmt.Errorf("both server and router are disabled; set AGENTATION_SERVER_ADDR and/or AGENTATION_ROUTER_ADDR to a listen address")
 	}
 
-	cfg.foreground = *foreground
 	return cfg, nil
 }
 
-func parseControlFlags(commandName string, args []string, stderr io.Writer) (controlConfig, error) {
+func resolveAddress(flagValue string, envValue string, fallback string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	if envValue != "" {
+		return envValue
+	}
+	return fallback
+}
+
+func firstNonEmptyEnv(keys ...string) string {
+	for _, key := range keys {
+		value := strings.TrimSpace(os.Getenv(key))
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func parseNoArgCommand(commandName string, args []string, stderr io.Writer) error {
 	flags := flag.NewFlagSet("agentation "+commandName, flag.ContinueOnError)
 	flags.SetOutput(stderr)
-
-	server := flags.Bool("server", false, commandName+" server")
-	router := flags.Bool("router", false, commandName+" router")
-
 	if err := flags.Parse(args); err != nil {
-		return controlConfig{}, err
+		return err
 	}
 	if flags.NArg() != 0 {
-		return controlConfig{}, fmt.Errorf("%s does not accept positional arguments", commandName)
+		return fmt.Errorf("%s does not accept positional arguments", commandName)
+	}
+	return nil
+}
+
+func pidFilePath() string {
+	path := strings.TrimSpace(os.Getenv("AGENTATION_PID_FILE"))
+	if path != "" {
+		return path
+	}
+	return filepath.Join(os.TempDir(), "agentation.pid")
+}
+
+func stackLogFilePath() string {
+	path := strings.TrimSpace(os.Getenv("AGENTATION_LOG_FILE"))
+	if path != "" {
+		return path
+	}
+	return filepath.Join(os.TempDir(), "agentation.log")
+}
+
+func serverLogFilePath() string {
+	path := strings.TrimSpace(os.Getenv("AGENTATION_SERVER_LOG_FILE"))
+	if path != "" {
+		return path
+	}
+	return filepath.Join(os.TempDir(), "agentation-server.log")
+}
+
+func routerLogFilePath() string {
+	path := strings.TrimSpace(os.Getenv("AGENTATION_ROUTER_LOG_FILE"))
+	if path != "" {
+		return path
+	}
+	return filepath.Join(os.TempDir(), "agentation-router.log")
+}
+
+func openServiceLogWriter(path string, stdout io.Writer) (io.Writer, *os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, nil, err
 	}
 
-	cfg := controlConfig{server: *server, router: *router}
-	if cfg.server || cfg.router {
-		return cfg, nil
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	cfg.server = true
-	cfg.router = strings.TrimSpace(os.Getenv("AGENTATION_ROUTER_ADDR")) != ""
-	return cfg, nil
+	writer := io.Writer(file)
+	if stdout != nil {
+		writer = io.MultiWriter(stdout, file)
+	}
+
+	return writer, file, nil
+}
+
+func writePID(pid int) error {
+	path := pidFilePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(strconv.Itoa(pid)), 0o644)
+}
+
+func readPID() (int, error) {
+	data, err := os.ReadFile(pidFilePath())
+	if err != nil {
+		return 0, err
+	}
+
+	value := strings.TrimSpace(string(data))
+	if value == "" {
+		return 0, fmt.Errorf("pid file is empty")
+	}
+
+	pid, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, err
+	}
+	if pid <= 0 {
+		return 0, fmt.Errorf("invalid pid")
+	}
+
+	return pid, nil
+}
+
+func removePIDFile() error {
+	err := os.Remove(pidFilePath())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+func isProcessRunning(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+
+	err = process.Signal(syscall.Signal(0))
+	if err == nil {
+		return true
+	}
+
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "process already finished") || strings.Contains(message, "no such process") {
+		return false
+	}
+
+	return true
+}
+
+func loadRunningPID() (int, bool) {
+	pid, err := readPID()
+	if err == nil && isProcessRunning(pid) {
+		return pid, true
+	}
+
+	fallbackPID, ok := findRunningPIDByScan()
+	if !ok {
+		_ = removePIDFile()
+		return 0, false
+	}
+
+	_ = writePID(fallbackPID)
+	return fallbackPID, true
+}
+
+func findRunningPIDByScan() (int, bool) {
+	output, err := exec.Command("pgrep", "-f", "__serve-stack").Output()
+	if err != nil {
+		return 0, false
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		value := strings.TrimSpace(line)
+		if value == "" {
+			continue
+		}
+
+		pid, parseErr := strconv.Atoi(value)
+		if parseErr != nil {
+			continue
+		}
+		if pid <= 0 || pid == os.Getpid() {
+			continue
+		}
+		if !isProcessRunning(pid) {
+			continue
+		}
+
+		commandOutput, commandErr := exec.Command("ps", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
+		if commandErr != nil {
+			continue
+		}
+
+		commandLine := strings.TrimSpace(string(commandOutput))
+		if commandLine == "" {
+			continue
+		}
+
+		if strings.Contains(commandLine, "__serve-stack") {
+			return pid, true
+		}
+	}
+
+	return 0, false
 }

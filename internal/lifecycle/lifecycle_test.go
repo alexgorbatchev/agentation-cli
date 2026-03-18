@@ -5,72 +5,98 @@ import (
 	"testing"
 )
 
-func TestParseStartFlags_DefaultServerOnly(t *testing.T) {
+func TestResolveServeConfig_DefaultStartsBoth(t *testing.T) {
 	t.Setenv("AGENTATION_SERVER_ADDR", "")
 	t.Setenv("AGENTATION_ROUTER_ADDR", "")
 
-	cfg, err := parseStartFlags(nil, &bytes.Buffer{})
+	cfg, err := resolveServeConfig("", "")
 	if err != nil {
-		t.Fatalf("parseStartFlags error: %v", err)
+		t.Fatalf("resolveServeConfig error: %v", err)
 	}
 
-	if !cfg.server {
-		t.Fatalf("server should be enabled by default")
-	}
-	if cfg.router {
-		t.Fatalf("router should be disabled by default")
+	if !cfg.enableServer || !cfg.enableRouter {
+		t.Fatalf("expected both services enabled, got server=%v router=%v", cfg.enableServer, cfg.enableRouter)
 	}
 	if cfg.serverAddr != defaultServerAddress {
 		t.Fatalf("server addr = %q, want %q", cfg.serverAddr, defaultServerAddress)
 	}
+	if cfg.routerAddr != defaultRouterAddress {
+		t.Fatalf("router addr = %q, want %q", cfg.routerAddr, defaultRouterAddress)
+	}
 }
 
-func TestParseStartFlags_ServerAddrFromEnv(t *testing.T) {
-	t.Setenv("AGENTATION_SERVER_ADDR", "127.0.0.1:5757")
+func TestResolveServeConfig_DisableServerWithZero(t *testing.T) {
+	t.Setenv("AGENTATION_SERVER_ADDR", "0")
 	t.Setenv("AGENTATION_ROUTER_ADDR", "")
 
-	cfg, err := parseStartFlags(nil, &bytes.Buffer{})
+	cfg, err := resolveServeConfig("", "")
 	if err != nil {
-		t.Fatalf("parseStartFlags error: %v", err)
+		t.Fatalf("resolveServeConfig error: %v", err)
 	}
-	if cfg.serverAddr != "127.0.0.1:5757" {
-		t.Fatalf("server addr = %q, want env value", cfg.serverAddr)
+	if cfg.enableServer {
+		t.Fatal("server should be disabled when AGENTATION_SERVER_ADDR=0")
+	}
+	if !cfg.enableRouter {
+		t.Fatal("router should remain enabled")
 	}
 }
 
-func TestParseStartFlags_EnableRouterFromEnv(t *testing.T) {
+func TestResolveServeConfig_DisableRouterWithZero(t *testing.T) {
 	t.Setenv("AGENTATION_SERVER_ADDR", "")
-	t.Setenv("AGENTATION_ROUTER_ADDR", "127.0.0.1:9999")
+	t.Setenv("AGENTATION_ROUTER_ADDR", "0")
 
-	cfg, err := parseStartFlags(nil, &bytes.Buffer{})
+	cfg, err := resolveServeConfig("", "")
 	if err != nil {
-		t.Fatalf("parseStartFlags error: %v", err)
+		t.Fatalf("resolveServeConfig error: %v", err)
 	}
-
-	if !cfg.server || !cfg.router {
-		t.Fatalf("expected server and router enabled, got server=%v router=%v", cfg.server, cfg.router)
+	if !cfg.enableServer {
+		t.Fatal("server should remain enabled")
 	}
-	if cfg.routerAddr != "127.0.0.1:9999" {
-		t.Fatalf("router addr = %q, want env value", cfg.routerAddr)
+	if cfg.enableRouter {
+		t.Fatal("router should be disabled when AGENTATION_ROUTER_ADDR=0")
 	}
 }
 
-func TestParseStartFlags_ExplicitSelection(t *testing.T) {
-	t.Setenv("AGENTATION_ROUTER_ADDR", "")
+func TestResolveServeConfig_BothDisabledErrors(t *testing.T) {
+	t.Setenv("AGENTATION_SERVER_ADDR", "0")
+	t.Setenv("AGENTATION_ROUTER_ADDR", "0")
 
-	cfg, err := parseStartFlags([]string{"--router", "--router-addr", "127.0.0.1:8788"}, &bytes.Buffer{})
+	if _, err := resolveServeConfig("", ""); err == nil {
+		t.Fatal("expected error when both services are disabled")
+	}
+}
+
+func TestResolveServeConfig_FlagOverridesEnv(t *testing.T) {
+	t.Setenv("AGENTATION_SERVER_ADDR", "0")
+	t.Setenv("AGENTATION_ROUTER_ADDR", "0")
+
+	cfg, err := resolveServeConfig("127.0.0.1:4748", "127.0.0.1:8788")
 	if err != nil {
-		t.Fatalf("parseStartFlags error: %v", err)
+		t.Fatalf("resolveServeConfig error: %v", err)
 	}
 
-	if cfg.server {
-		t.Fatalf("server should be disabled when only router is selected")
+	if !cfg.enableServer || !cfg.enableRouter {
+		t.Fatalf("expected both services enabled, got server=%v router=%v", cfg.enableServer, cfg.enableRouter)
 	}
-	if !cfg.router {
-		t.Fatalf("router should be enabled")
+	if cfg.serverAddr != "127.0.0.1:4748" {
+		t.Fatalf("server addr = %q, want flag override", cfg.serverAddr)
 	}
 	if cfg.routerAddr != "127.0.0.1:8788" {
-		t.Fatalf("router addr = %q, want 127.0.0.1:8788", cfg.routerAddr)
+		t.Fatalf("router addr = %q, want flag override", cfg.routerAddr)
+	}
+}
+
+func TestResolveServeConfig_RouterLegacyEnvFallback(t *testing.T) {
+	t.Setenv("AGENTATION_SERVER_ADDR", "")
+	t.Setenv("AGENTATION_ROUTER_ADDR", "")
+	t.Setenv("AGENTATION_ROUTER_ADDRESS", "127.0.0.1:8999")
+
+	cfg, err := resolveServeConfig("", "")
+	if err != nil {
+		t.Fatalf("resolveServeConfig error: %v", err)
+	}
+	if cfg.routerAddr != "127.0.0.1:8999" {
+		t.Fatalf("router addr = %q, want legacy env fallback", cfg.routerAddr)
 	}
 }
 
@@ -81,48 +107,9 @@ func TestParseStartFlags_ConflictingModeFlags(t *testing.T) {
 	}
 }
 
-func TestParseControlFlags_DefaultSelection(t *testing.T) {
-	t.Setenv("AGENTATION_ROUTER_ADDR", "")
-
-	cfg, err := parseControlFlags("status", nil, &bytes.Buffer{})
-	if err != nil {
-		t.Fatalf("parseControlFlags error: %v", err)
-	}
-	if !cfg.server || cfg.router {
-		t.Fatalf("expected default selection server=true router=false, got %+v", cfg)
-	}
-
-	t.Setenv("AGENTATION_ROUTER_ADDR", "127.0.0.1:8787")
-	cfg, err = parseControlFlags("status", nil, &bytes.Buffer{})
-	if err != nil {
-		t.Fatalf("parseControlFlags error: %v", err)
-	}
-	if !cfg.server || !cfg.router {
-		t.Fatalf("expected default selection server=true router=true when env set, got %+v", cfg)
-	}
-}
-
-func TestParseStartFlags_RouterAddrFlagOverridesEnv(t *testing.T) {
-	t.Setenv("AGENTATION_ROUTER_ADDR", "127.0.0.1:9999")
-
-	cfg, err := parseStartFlags([]string{"--router", "--router-addr", "127.0.0.1:8788"}, &bytes.Buffer{})
-	if err != nil {
-		t.Fatalf("parseStartFlags error: %v", err)
-	}
-	if cfg.routerAddr != "127.0.0.1:8788" {
-		t.Fatalf("router addr = %q, want flag override", cfg.routerAddr)
-	}
-}
-
-func TestParseStartFlags_ServerAddrFlagOverridesEnv(t *testing.T) {
-	t.Setenv("AGENTATION_SERVER_ADDR", "127.0.0.1:5757")
-	t.Setenv("AGENTATION_ROUTER_ADDR", "")
-
-	cfg, err := parseStartFlags([]string{"--server", "--server-addr", "127.0.0.1:4748"}, &bytes.Buffer{})
-	if err != nil {
-		t.Fatalf("parseStartFlags error: %v", err)
-	}
-	if cfg.serverAddr != "127.0.0.1:4748" {
-		t.Fatalf("server addr = %q, want flag override", cfg.serverAddr)
+func TestParseNoArgCommandRejectsPositional(t *testing.T) {
+	err := parseNoArgCommand("status", []string{"extra"}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected positional argument error")
 	}
 }
