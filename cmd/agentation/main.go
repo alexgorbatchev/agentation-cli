@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/benjitaylor/agentation/cli/internal/api"
-	"github.com/benjitaylor/agentation/cli/internal/servercmd"
+	"github.com/benjitaylor/agentation/cli/internal/lifecycle"
+	"github.com/benjitaylor/agentation/cli/internal/routerctl"
+	"github.com/benjitaylor/agentation/cli/internal/serverctl"
 )
 
 func main() {
@@ -82,8 +84,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "error: %v\n", err)
 			return 1
 		}
-	case "server":
-		return servercmd.Run(commandArgs, stdout, stderr)
+	case "start":
+		return lifecycle.RunStart(commandArgs, stdout, stderr)
+	case "stop":
+		return lifecycle.RunStop(commandArgs, stdout, stderr)
+	case "status":
+		return lifecycle.RunStatus(commandArgs, stdout, stderr)
+	case "__serve-server":
+		return serverctl.Run(append([]string{"serve"}, commandArgs...), stdout, stderr)
+	case "__serve-router":
+		return routerctl.Run(append([]string{"serve"}, commandArgs...), stdout, stderr)
 	case "help", "--help", "-h":
 		printUsage(stdout)
 	default:
@@ -381,11 +391,17 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  dismiss <annotation-id>          Dismiss annotation")
 	fmt.Fprintln(writer, "  reply <annotation-id>            Add thread reply")
 	fmt.Fprintln(writer, "  watch                            Wait for new annotations/thread replies")
-	fmt.Fprintln(writer, "  server                           Manage local Agentation HTTP server")
+	fmt.Fprintln(writer, "  start                            Start local services (server by default)")
+	fmt.Fprintln(writer, "  stop                             Stop local services")
+	fmt.Fprintln(writer, "  status                           Show local service status")
 	fmt.Fprintln(writer)
 	fmt.Fprintln(writer, "Examples:")
 	fmt.Fprintln(writer, "  agentation pending --json")
 	fmt.Fprintln(writer, "  agentation ack ann_123")
 	fmt.Fprintln(writer, "  agentation resolve ann_123 --summary \"Updated spacing\"")
 	fmt.Fprintln(writer, "  agentation watch --batch-window 5 --timeout 120 --json")
+	fmt.Fprintln(writer, "  agentation start")
+	fmt.Fprintln(writer, "  AGENTATION_SERVER_ADDR=127.0.0.1:5757 agentation start")
+	fmt.Fprintln(writer, "  AGENTATION_ROUTER_ADDR=127.0.0.1:8787 agentation start")
+	fmt.Fprintln(writer, "  agentation start --server --server-addr 127.0.0.1:4747 --router --router-addr 127.0.0.1:8787")
 }
