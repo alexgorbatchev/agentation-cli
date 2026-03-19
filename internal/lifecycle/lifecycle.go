@@ -9,13 +9,13 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/benjitaylor/agentation/cli/internal/procctl"
 
 	routerconfig "github.com/benjitaylor/agentation/cli/internal/router/config"
 	routerhttp "github.com/benjitaylor/agentation/cli/internal/router/http"
@@ -52,7 +52,8 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	if pid, ok := loadRunningPID(); ok {
+	controller := stackController()
+	if pid, ok := controller.LoadRunningPID(); ok {
 		fmt.Fprintf(stdout, "agentation already running (pid %d)\n", pid)
 		return 0
 	}
@@ -61,50 +62,13 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		return runServe(cfg.serve, stdout, stderr)
 	}
 
-	executablePath, err := os.Executable()
-	if err != nil {
-		fmt.Fprintf(stderr, "failed to resolve executable path: %v\n", err)
-		return 1
-	}
-
 	stackLogPath := stackLogFilePath()
-	if err := os.MkdirAll(filepath.Dir(stackLogPath), 0o755); err != nil {
-		fmt.Fprintf(stderr, "failed to create log directory: %v\n", err)
-		return 1
-	}
-
-	stackLogFile, err := os.OpenFile(stackLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		fmt.Fprintf(stderr, "failed to open log file: %v\n", err)
-		return 1
-	}
-	defer stackLogFile.Close()
-
-	commandArgs := []string{
-		"__serve-stack",
+	pid, err := controller.StartBackground("__serve-stack", []string{
 		"--server-addr", cfg.serve.serverAddr,
 		"--router-addr", cfg.serve.routerAddr,
-	}
-	command := exec.Command(executablePath, commandArgs...)
-	command.Stdout = stackLogFile
-	command.Stderr = stackLogFile
-
-	if err := command.Start(); err != nil {
+	}, stackLogPath)
+	if err != nil {
 		fmt.Fprintf(stderr, "failed to start agentation: %v\n", err)
-		return 1
-	}
-
-	pid := command.Process.Pid
-	if err := writePID(pid); err != nil {
-		fmt.Fprintf(stderr, "failed to write pid file: %v\n", err)
-		_ = command.Process.Kill()
-		return 1
-	}
-
-	time.Sleep(250 * time.Millisecond)
-	if !isProcessRunning(pid) {
-		_ = removePIDFile()
-		fmt.Fprintln(stderr, "agentation failed to stay running")
 		return 1
 	}
 
@@ -241,45 +205,17 @@ func RunStop(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	pid, err := readPID()
-	if err != nil || !isProcessRunning(pid) {
-		fallbackPID, ok := findRunningPIDByScan()
-		if !ok {
-			_ = removePIDFile()
-			fmt.Fprintln(stdout, "agentation is not running")
-			return 0
-		}
-		pid = fallbackPID
-	}
-
-	process, err := os.FindProcess(pid)
+	controller := stackController()
+	pid, stopped, err := controller.Stop(30, 100*time.Millisecond)
 	if err != nil {
-		fmt.Fprintf(stderr, "failed to find process: %v\n", err)
+		fmt.Fprintf(stderr, "failed to stop agentation: %v\n", err)
 		return 1
 	}
-
-	if err := process.Signal(os.Interrupt); err != nil {
-		if killErr := process.Kill(); killErr != nil {
-			fmt.Fprintf(stderr, "failed to stop agentation: %v\n", killErr)
-			return 1
-		}
+	if !stopped {
+		fmt.Fprintln(stdout, "agentation is not running")
+		return 0
 	}
 
-	for range 30 {
-		if !isProcessRunning(pid) {
-			_ = removePIDFile()
-			fmt.Fprintf(stdout, "agentation stopped (pid %d)\n", pid)
-			return 0
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	if err := process.Kill(); err != nil {
-		fmt.Fprintf(stderr, "failed to kill agentation: %v\n", err)
-		return 1
-	}
-
-	_ = removePIDFile()
 	fmt.Fprintf(stdout, "agentation stopped (pid %d)\n", pid)
 	return 0
 }
@@ -293,16 +229,10 @@ func RunStatus(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	pid, err := readPID()
-	if err != nil || !isProcessRunning(pid) {
-		fallbackPID, ok := findRunningPIDByScan()
-		if !ok {
-			_ = removePIDFile()
-			fmt.Fprintln(stdout, "agentation not running")
-			return 1
-		}
-		pid = fallbackPID
-		_ = writePID(pid)
+	pid, ok := stackController().LoadRunningPID()
+	if !ok {
+		fmt.Fprintln(stdout, "agentation not running")
+		return 1
 	}
 
 	fmt.Fprintf(stdout, "agentation running (pid %d)\n", pid)
@@ -419,35 +349,19 @@ func parseNoArgCommand(commandName string, args []string, stderr io.Writer) erro
 }
 
 func pidFilePath() string {
-	path := strings.TrimSpace(os.Getenv("AGENTATION_PID_FILE"))
-	if path != "" {
-		return path
-	}
-	return filepath.Join(os.TempDir(), "agentation.pid")
+	return procctl.PathFromEnv("AGENTATION_PID_FILE", "agentation.pid")
 }
 
 func stackLogFilePath() string {
-	path := strings.TrimSpace(os.Getenv("AGENTATION_LOG_FILE"))
-	if path != "" {
-		return path
-	}
-	return filepath.Join(os.TempDir(), "agentation.log")
+	return procctl.PathFromEnv("AGENTATION_LOG_FILE", "agentation.log")
 }
 
 func serverLogFilePath() string {
-	path := strings.TrimSpace(os.Getenv("AGENTATION_SERVER_LOG_FILE"))
-	if path != "" {
-		return path
-	}
-	return filepath.Join(os.TempDir(), "agentation-server.log")
+	return procctl.PathFromEnv("AGENTATION_SERVER_LOG_FILE", "agentation-server.log")
 }
 
 func routerLogFilePath() string {
-	path := strings.TrimSpace(os.Getenv("AGENTATION_ROUTER_LOG_FILE"))
-	if path != "" {
-		return path
-	}
-	return filepath.Join(os.TempDir(), "agentation-router.log")
+	return procctl.PathFromEnv("AGENTATION_ROUTER_LOG_FILE", "agentation-router.log")
 }
 
 func openServiceLogWriter(path string, stdout io.Writer) (io.Writer, *os.File, error) {
@@ -468,121 +382,6 @@ func openServiceLogWriter(path string, stdout io.Writer) (io.Writer, *os.File, e
 	return writer, file, nil
 }
 
-func writePID(pid int) error {
-	path := pidFilePath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(strconv.Itoa(pid)), 0o644)
-}
-
-func readPID() (int, error) {
-	data, err := os.ReadFile(pidFilePath())
-	if err != nil {
-		return 0, err
-	}
-
-	value := strings.TrimSpace(string(data))
-	if value == "" {
-		return 0, fmt.Errorf("pid file is empty")
-	}
-
-	pid, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, err
-	}
-	if pid <= 0 {
-		return 0, fmt.Errorf("invalid pid")
-	}
-
-	return pid, nil
-}
-
-func removePIDFile() error {
-	err := os.Remove(pidFilePath())
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	return err
-}
-
-func isProcessRunning(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-
-	err = process.Signal(syscall.Signal(0))
-	if err == nil {
-		return true
-	}
-
-	message := strings.ToLower(err.Error())
-	if strings.Contains(message, "process already finished") || strings.Contains(message, "no such process") {
-		return false
-	}
-
-	return true
-}
-
-func loadRunningPID() (int, bool) {
-	pid, err := readPID()
-	if err == nil && isProcessRunning(pid) {
-		return pid, true
-	}
-
-	fallbackPID, ok := findRunningPIDByScan()
-	if !ok {
-		_ = removePIDFile()
-		return 0, false
-	}
-
-	_ = writePID(fallbackPID)
-	return fallbackPID, true
-}
-
-func findRunningPIDByScan() (int, bool) {
-	output, err := exec.Command("pgrep", "-f", "__serve-stack").Output()
-	if err != nil {
-		return 0, false
-	}
-
-	lines := strings.SplitSeq(strings.TrimSpace(string(output)), "\n")
-	for line := range lines {
-		value := strings.TrimSpace(line)
-		if value == "" {
-			continue
-		}
-
-		pid, parseErr := strconv.Atoi(value)
-		if parseErr != nil {
-			continue
-		}
-		if pid <= 0 || pid == os.Getpid() {
-			continue
-		}
-		if !isProcessRunning(pid) {
-			continue
-		}
-
-		commandOutput, commandErr := exec.Command("ps", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
-		if commandErr != nil {
-			continue
-		}
-
-		commandLine := strings.TrimSpace(string(commandOutput))
-		if commandLine == "" {
-			continue
-		}
-
-		if strings.Contains(commandLine, "__serve-stack") {
-			return pid, true
-		}
-	}
-
-	return 0, false
+func stackController() procctl.Controller {
+	return procctl.New(pidFilePath(), "__serve-stack")
 }

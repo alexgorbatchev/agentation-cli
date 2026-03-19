@@ -9,14 +9,11 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
-	"path/filepath"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
+	"github.com/benjitaylor/agentation/cli/internal/procctl"
 	"github.com/benjitaylor/agentation/cli/internal/router/config"
 	httpserver "github.com/benjitaylor/agentation/cli/internal/router/http"
 	routerpkg "github.com/benjitaylor/agentation/cli/internal/router/router"
@@ -94,8 +91,9 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 
 func runStart(args []string, stdout, stderr io.Writer) int {
 	foreground, serveArgs := parseStartArgs(args)
+	controller := routerController()
 
-	if pid, ok := loadRunningPID(); ok {
+	if pid, ok := controller.LoadRunningPID(); ok {
 		fmt.Fprintf(stdout, "agentation router already running (pid %d)\n", pid)
 		return 0
 	}
@@ -105,45 +103,10 @@ func runStart(args []string, stdout, stderr io.Writer) int {
 		return runServe(serveArgs, stdout, stderr)
 	}
 
-	executablePath, err := os.Executable()
-	if err != nil {
-		fmt.Fprintf(stderr, "failed to resolve executable path: %v\n", err)
-		return 1
-	}
-
 	logPath := logFilePath()
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-		fmt.Fprintf(stderr, "failed to create log directory: %v\n", err)
-		return 1
-	}
-	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	pid, err := controller.StartBackground("__serve-router", serveArgs, logPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "failed to open log file: %v\n", err)
-		return 1
-	}
-	defer logFile.Close()
-
-	commandArgs := append([]string{"__serve-router"}, serveArgs...)
-	command := exec.Command(executablePath, commandArgs...)
-	command.Stdout = logFile
-	command.Stderr = logFile
-
-	if err := command.Start(); err != nil {
 		fmt.Fprintf(stderr, "failed to start agentation router: %v\n", err)
-		return 1
-	}
-
-	pid := command.Process.Pid
-	if err := writePID(pid); err != nil {
-		fmt.Fprintf(stderr, "failed to write pid file: %v\n", err)
-		_ = command.Process.Kill()
-		return 1
-	}
-
-	time.Sleep(250 * time.Millisecond)
-	if !isProcessRunning(pid) {
-		_ = removePIDFile()
-		fmt.Fprintln(stderr, "agentation router failed to stay running")
 		return 1
 	}
 
@@ -153,60 +116,25 @@ func runStart(args []string, stdout, stderr io.Writer) int {
 }
 
 func runStop(stdout, stderr io.Writer) int {
-	pid, err := readPID()
-	if err != nil || !isProcessRunning(pid) {
-		fallbackPID, ok := findRunningRouterPIDByScan()
-		if !ok {
-			_ = removePIDFile()
-			fmt.Fprintln(stdout, "agentation router is not running")
-			return 0
-		}
-		pid = fallbackPID
-	}
-
-	process, err := os.FindProcess(pid)
+	pid, stopped, err := routerController().Stop(30, 100*time.Millisecond)
 	if err != nil {
-		fmt.Fprintf(stderr, "failed to find agentation router process: %v\n", err)
+		fmt.Fprintf(stderr, "failed to stop agentation router: %v\n", err)
 		return 1
 	}
-
-	if err := process.Signal(os.Interrupt); err != nil {
-		if killErr := process.Kill(); killErr != nil {
-			fmt.Fprintf(stderr, "failed to stop agentation router: %v\n", killErr)
-			return 1
-		}
+	if !stopped {
+		fmt.Fprintln(stdout, "agentation router is not running")
+		return 0
 	}
 
-	for range 30 {
-		if !isProcessRunning(pid) {
-			_ = removePIDFile()
-			fmt.Fprintf(stdout, "agentation router stopped (pid %d)\n", pid)
-			return 0
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	if err := process.Kill(); err != nil {
-		fmt.Fprintf(stderr, "failed to kill agentation router: %v\n", err)
-		return 1
-	}
-
-	_ = removePIDFile()
 	fmt.Fprintf(stdout, "agentation router stopped (pid %d)\n", pid)
 	return 0
 }
 
 func runStatus(stdout io.Writer) int {
-	pid, err := readPID()
-	if err != nil || !isProcessRunning(pid) {
-		fallbackPID, ok := findRunningRouterPIDByScan()
-		if !ok {
-			_ = removePIDFile()
-			fmt.Fprintln(stdout, "agentation router not running")
-			return 1
-		}
-		pid = fallbackPID
-		_ = writePID(pid)
+	pid, ok := routerController().LoadRunningPID()
+	if !ok {
+		fmt.Fprintln(stdout, "agentation router not running")
+		return 1
 	}
 
 	fmt.Fprintf(stdout, "agentation router running (pid %d)\n", pid)
@@ -230,138 +158,15 @@ func parseStartArgs(args []string) (bool, []string) {
 }
 
 func pidFilePath() string {
-	path := strings.TrimSpace(os.Getenv("AGENTATION_ROUTER_PID_FILE"))
-	if path != "" {
-		return path
-	}
-	return filepath.Join(os.TempDir(), "agentation-router.pid")
+	return procctl.PathFromEnv("AGENTATION_ROUTER_PID_FILE", "agentation-router.pid")
 }
 
 func logFilePath() string {
-	path := strings.TrimSpace(os.Getenv("AGENTATION_ROUTER_LOG_FILE"))
-	if path != "" {
-		return path
-	}
-	return filepath.Join(os.TempDir(), "agentation-router.log")
+	return procctl.PathFromEnv("AGENTATION_ROUTER_LOG_FILE", "agentation-router.log")
 }
 
-func writePID(pid int) error {
-	path := pidFilePath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(strconv.Itoa(pid)), 0o644)
-}
-
-func readPID() (int, error) {
-	contents, err := os.ReadFile(pidFilePath())
-	if err != nil {
-		return 0, err
-	}
-
-	raw := strings.TrimSpace(string(contents))
-	if raw == "" {
-		return 0, fmt.Errorf("pid file is empty")
-	}
-
-	pid, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, err
-	}
-	if pid <= 0 {
-		return 0, fmt.Errorf("pid is invalid")
-	}
-
-	return pid, nil
-}
-
-func removePIDFile() error {
-	err := os.Remove(pidFilePath())
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	return err
-}
-
-func isProcessRunning(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-
-	err = process.Signal(syscall.Signal(0))
-	if err == nil {
-		return true
-	}
-
-	message := strings.ToLower(err.Error())
-	if strings.Contains(message, "process already finished") || strings.Contains(message, "no such process") {
-		return false
-	}
-
-	return true
-}
-
-func loadRunningPID() (int, bool) {
-	pid, err := readPID()
-	if err == nil && isProcessRunning(pid) {
-		return pid, true
-	}
-
-	fallbackPID, ok := findRunningRouterPIDByScan()
-	if !ok {
-		_ = removePIDFile()
-		return 0, false
-	}
-
-	_ = writePID(fallbackPID)
-	return fallbackPID, true
-}
-
-func findRunningRouterPIDByScan() (int, bool) {
-	output, err := exec.Command("pgrep", "-f", "__serve-router").Output()
-	if err != nil {
-		return 0, false
-	}
-
-	lines := strings.SplitSeq(strings.TrimSpace(string(output)), "\n")
-	for line := range lines {
-		value := strings.TrimSpace(line)
-		if value == "" {
-			continue
-		}
-
-		pid, parseErr := strconv.Atoi(value)
-		if parseErr != nil {
-			continue
-		}
-		if pid <= 0 || pid == os.Getpid() {
-			continue
-		}
-		if !isProcessRunning(pid) {
-			continue
-		}
-
-		commandOutput, commandErr := exec.Command("ps", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
-		if commandErr != nil {
-			continue
-		}
-
-		commandLine := strings.TrimSpace(string(commandOutput))
-		if commandLine == "" {
-			continue
-		}
-
-		if strings.Contains(commandLine, "__serve-router") {
-			return pid, true
-		}
-	}
-
-	return 0, false
+func routerController() procctl.Controller {
+	return procctl.New(pidFilePath(), "__serve-router")
 }
 
 func printUsage(writer io.Writer) {
