@@ -199,6 +199,11 @@ func (s *Server) handleOpen(writer http.ResponseWriter, request *http.Request) {
 		writeError(writer, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	if !s.isAuthorized(request) {
+		s.logger.Warn("unauthorized open request")
+		writeError(writer, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 
 	openRequest, error := parseOpenRequest(request, s.config.RequestBodyLimit)
 	if error != nil {
