@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/benjitaylor/agentation/cli/internal/api"
@@ -192,6 +193,20 @@ type projectSessionSummary struct {
 	AnnotationCount int    `json:"annotationCount"`
 }
 
+const projectSessionFetchWorkerLimit = 8
+
+type projectSessionFetchJob struct {
+	index   int
+	session api.Session
+}
+
+type projectSessionFetchResult struct {
+	index           int
+	sessionSummary  projectSessionSummary
+	annotationCount int
+	err             error
+}
+
 func runProject(ctx context.Context, client *api.Client, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: project <project-id> [--json]")
@@ -217,24 +232,15 @@ func runProject(ctx context.Context, client *api.Client, args []string, stdout, 
 		return err
 	}
 
-	summary := projectSummary{
-		ProjectID: projectID,
-		Sessions:  make([]projectSessionSummary, 0, len(sessions)),
+	sessionSummaries, annotationCount, err := fetchProjectSessionSummaries(ctx, client, sessions)
+	if err != nil {
+		return err
 	}
 
-	for _, session := range sessions {
-		sessionWithAnnotations, err := client.GetSession(ctx, session.ID)
-		if err != nil {
-			return err
-		}
-		annotationCount := len(sessionWithAnnotations.Annotations)
-		summary.AnnotationCount += annotationCount
-		summary.Sessions = append(summary.Sessions, projectSessionSummary{
-			ID:              session.ID,
-			Status:          session.Status,
-			URL:             session.URL,
-			AnnotationCount: annotationCount,
-		})
+	summary := projectSummary{
+		ProjectID:       projectID,
+		AnnotationCount: annotationCount,
+		Sessions:        sessionSummaries,
 	}
 
 	sort.Slice(summary.Sessions, func(i, j int) bool {
@@ -258,6 +264,80 @@ func runProject(ctx context.Context, client *api.Client, args []string, stdout, 
 	}
 
 	return nil
+}
+
+func fetchProjectSessionSummaries(ctx context.Context, client *api.Client, sessions []api.Session) ([]projectSessionSummary, int, error) {
+	if len(sessions) == 0 {
+		return nil, 0, nil
+	}
+
+	workerCount := projectSessionFetchWorkerLimit
+	if workerCount > len(sessions) {
+		workerCount = len(sessions)
+	}
+
+	jobs := make(chan projectSessionFetchJob)
+	results := make(chan projectSessionFetchResult, len(sessions))
+
+	var wg sync.WaitGroup
+	wg.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer wg.Done()
+			for job := range jobs {
+				sessionWithAnnotations, err := client.GetSession(ctx, job.session.ID)
+				if err != nil {
+					results <- projectSessionFetchResult{index: job.index, err: err}
+					continue
+				}
+
+				annotationCount := len(sessionWithAnnotations.Annotations)
+				results <- projectSessionFetchResult{
+					index: job.index,
+					sessionSummary: projectSessionSummary{
+						ID:              job.session.ID,
+						Status:          job.session.Status,
+						URL:             job.session.URL,
+						AnnotationCount: annotationCount,
+					},
+					annotationCount: annotationCount,
+				}
+			}
+		}()
+	}
+
+	for i, session := range sessions {
+		jobs <- projectSessionFetchJob{index: i, session: session}
+	}
+	close(jobs)
+
+	wg.Wait()
+	close(results)
+
+	sessionSummaries := make([]projectSessionSummary, len(sessions))
+	totalAnnotations := 0
+
+	firstErrIndex := len(sessions)
+	var firstErr error
+
+	for result := range results {
+		if result.err != nil {
+			if result.index < firstErrIndex {
+				firstErrIndex = result.index
+				firstErr = result.err
+			}
+			continue
+		}
+
+		sessionSummaries[result.index] = result.sessionSummary
+		totalAnnotations += result.annotationCount
+	}
+
+	if firstErr != nil {
+		return nil, 0, firstErr
+	}
+
+	return sessionSummaries, totalAnnotations, nil
 }
 
 func runPending(ctx context.Context, client *api.Client, args []string, stdout, stderr io.Writer) error {
