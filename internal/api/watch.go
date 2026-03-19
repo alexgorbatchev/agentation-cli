@@ -14,7 +14,7 @@ import (
 
 const (
 	defaultBatchWindow  = 10 * time.Second
-	defaultWatchTimeout = 120 * time.Second
+	defaultWatchTimeout = 300 * time.Second
 	maxBatchWindow      = 60 * time.Second
 	maxWatchTimeout     = 300 * time.Second
 )
@@ -30,7 +30,7 @@ func (c *Client) Watch(ctx context.Context, opts WatchOptions) (*WatchOutput, er
 	batchWindow := clampDuration(opts.BatchWindow, defaultBatchWindow, time.Second, maxBatchWindow)
 	watchTimeout := clampDuration(opts.Timeout, defaultWatchTimeout, time.Second, maxWatchTimeout)
 
-	pending, err := c.GetPending(ctx, opts.SessionID)
+	pending, err := c.GetPending(ctx, opts.SessionID, opts.ProjectID)
 	if err != nil {
 		return nil, fmt.Errorf("draining pending annotations before watch: %w", err)
 	}
@@ -49,7 +49,7 @@ func (c *Client) Watch(ctx context.Context, opts WatchOptions) (*WatchOutput, er
 
 	events := make(chan Annotation, 32)
 	errs := make(chan error, 1)
-	go c.streamAnnotations(watchCtx, opts.SessionID, events, errs)
+	go c.streamAnnotations(watchCtx, opts.SessionID, opts.ProjectID, events, errs)
 
 	collected := make(map[string]Annotation)
 	order := make([]string, 0)
@@ -102,10 +102,14 @@ func (c *Client) Watch(ctx context.Context, opts WatchOptions) (*WatchOutput, er
 	}
 }
 
-func (c *Client) streamAnnotations(ctx context.Context, sessionID string, out chan<- Annotation, errs chan<- error) {
+func (c *Client) streamAnnotations(ctx context.Context, sessionID, projectID string, out chan<- Annotation, errs chan<- error) {
 	ssePath := "/events?agent=true"
-	if sessionID != "" {
-		ssePath = fmt.Sprintf("/sessions/%s/events?agent=true", url.PathEscape(sessionID))
+	trimmedSessionID := strings.TrimSpace(sessionID)
+	trimmedProjectID := strings.TrimSpace(projectID)
+	if trimmedSessionID != "" {
+		ssePath = fmt.Sprintf("/sessions/%s/events?agent=true", url.PathEscape(trimmedSessionID))
+	} else if trimmedProjectID != "" {
+		ssePath = fmt.Sprintf("/events?agent=true&projectId=%s", url.QueryEscape(trimmedProjectID))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+ssePath, nil)
@@ -139,7 +143,7 @@ func (c *Client) streamAnnotations(ctx context.Context, sessionID string, out ch
 		line := scanner.Text()
 		if line == "" {
 			if len(dataLines) > 0 {
-				c.handleEventPayload(strings.Join(dataLines, "\n"), sessionID, out)
+				c.handleEventPayload(strings.Join(dataLines, "\n"), trimmedSessionID, out)
 				dataLines = dataLines[:0]
 			}
 			continue

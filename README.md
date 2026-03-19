@@ -24,25 +24,37 @@ agentation <command>
 
 Commands:
 
-- `sessions [--base-url <url>]`
-- `session [--base-url <url>] <session-id>`
-- `pending [--base-url <url>] [--session <id>]`
-- `ack [--base-url <url>] <annotation-id>`
-- `resolve [--base-url <url>] <annotation-id> [--summary "..."]`
-- `dismiss [--base-url <url>] <annotation-id> --reason "..."`
-- `reply [--base-url <url>] <annotation-id> --message "..."`
-- `watch [--base-url <url>] [--session <id>] [--batch-window 10] [--timeout 120]`
+- `ack <annotation-id> [--base-url <url>] [--json]`
+- `dismiss <annotation-id> [--base-url <url>] --reason "..." [--json]`
 - `generate --fix-loop-skill`
+- `pending <project-id> [--base-url <url>] [--json]`
+- `project <project-id> [--base-url <url>] [--json]`
+- `projects [--base-url <url>]`
+- `reply <annotation-id> [--base-url <url>] --message "..." [--json]`
+- `resolve <annotation-id> [--base-url <url>] [--summary "..."] [--json]`
 - `start [--server-addr host:port|0] [--router-addr host:port|0] [--foreground|--background]`
-- `stop`
 - `status`
+- `stop`
+- `watch <project-id> [--base-url <url>] [--batch-window 10] [--timeout 300] [--json]`
 
 Add `--json` to API/data commands for machine-readable output.
 
 You can set a default API endpoint with:
 
 ```bash
-AGENTATION_BASE_URL=http://127.0.0.1:4747 agentation pending --json
+AGENTATION_BASE_URL=http://127.0.0.1:4747 agentation pending project-alpha --json
+```
+
+## Project-scoped filtering
+
+Project scoping is required for `pending` and `watch`.
+Use `projects` to discover available project IDs.
+
+```bash
+agentation projects --json
+agentation project project-alpha --json
+agentation pending project-alpha --json
+agentation watch project-alpha --timeout 300 --batch-window 10 --json
 ```
 
 ## Skill generation helpers
