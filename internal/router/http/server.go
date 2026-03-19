@@ -172,6 +172,11 @@ func (s *Server) handlePing(writer http.ResponseWriter, request *http.Request) {
 		writeError(writer, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	if !s.isAuthorized(request) {
+		s.logger.Warn("unauthorized ping request")
+		writeError(writer, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 
 	pingRequest, error := parsePingRequest(request, s.config.RequestBodyLimit)
 	if error != nil {
