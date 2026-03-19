@@ -3,16 +3,13 @@ package main
 import (
 	"context"
 	_ "embed"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
-	"sync"
-	"time"
 
+	"github.com/benjitaylor/agentation/cli/cmd/agentation/commands"
 	"github.com/benjitaylor/agentation/cli/internal/api"
 	"github.com/benjitaylor/agentation/cli/internal/lifecycle"
 )
@@ -136,445 +133,35 @@ func extractBaseURL(args []string) (string, []string, error) {
 }
 
 func runProjects(ctx context.Context, client *api.Client, args []string, stdout, stderr io.Writer) error {
-	flags := flag.NewFlagSet("projects", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	asJSON := flags.Bool("json", false, "Output JSON")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-
-	sessions, err := client.ListSessions(ctx, "")
-	if err != nil {
-		return err
-	}
-
-	projectSet := make(map[string]struct{})
-	for _, session := range sessions {
-		projectID := strings.TrimSpace(session.ProjectID)
-		if projectID == "" {
-			continue
-		}
-		projectSet[projectID] = struct{}{}
-	}
-
-	projects := make([]string, 0, len(projectSet))
-	for projectID := range projectSet {
-		projects = append(projects, projectID)
-	}
-	sort.Strings(projects)
-
-	if *asJSON {
-		return writeJSON(stdout, projects)
-	}
-
-	if len(projects) == 0 {
-		fmt.Fprintln(stdout, "No projects found.")
-		return nil
-	}
-
-	for _, projectID := range projects {
-		fmt.Fprintln(stdout, projectID)
-	}
-
-	return nil
-}
-
-type projectSummary struct {
-	ProjectID       string                  `json:"projectId"`
-	SessionCount    int                     `json:"sessionCount"`
-	AnnotationCount int                     `json:"annotationCount"`
-	Sessions        []projectSessionSummary `json:"sessions"`
-}
-
-type projectSessionSummary struct {
-	ID              string `json:"id"`
-	Status          string `json:"status"`
-	URL             string `json:"url"`
-	AnnotationCount int    `json:"annotationCount"`
-}
-
-const projectSessionFetchWorkerLimit = 8
-
-type projectSessionFetchJob struct {
-	index   int
-	session api.Session
-}
-
-type projectSessionFetchResult struct {
-	index           int
-	sessionSummary  projectSessionSummary
-	annotationCount int
-	err             error
+	return commands.RunProjects(ctx, client, args, stdout, stderr)
 }
 
 func runProject(ctx context.Context, client *api.Client, args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: project <project-id> [--json]")
-	}
-
-	projectID := strings.TrimSpace(args[0])
-	if projectID == "" || strings.HasPrefix(projectID, "-") {
-		return fmt.Errorf("usage: project <project-id> [--json]")
-	}
-
-	flags := flag.NewFlagSet("project", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	asJSON := flags.Bool("json", false, "Output JSON")
-	if err := flags.Parse(args[1:]); err != nil {
-		return err
-	}
-	if flags.NArg() > 0 {
-		return fmt.Errorf("usage: project <project-id> [--json]")
-	}
-
-	sessions, err := client.ListSessions(ctx, projectID)
-	if err != nil {
-		return err
-	}
-
-	sessionSummaries, annotationCount, err := fetchProjectSessionSummaries(ctx, client, sessions)
-	if err != nil {
-		return err
-	}
-
-	summary := projectSummary{
-		ProjectID:       projectID,
-		AnnotationCount: annotationCount,
-		Sessions:        sessionSummaries,
-	}
-
-	sort.Slice(summary.Sessions, func(i, j int) bool {
-		return summary.Sessions[i].ID < summary.Sessions[j].ID
-	})
-	summary.SessionCount = len(summary.Sessions)
-
-	if *asJSON {
-		return writeJSON(stdout, summary)
-	}
-
-	fmt.Fprintf(stdout, "Project: %s\n", summary.ProjectID)
-	fmt.Fprintf(stdout, "Sessions: %d\n", summary.SessionCount)
-	fmt.Fprintf(stdout, "Annotations: %d\n", summary.AnnotationCount)
-	if summary.SessionCount == 0 {
-		return nil
-	}
-
-	for _, session := range summary.Sessions {
-		fmt.Fprintf(stdout, "%s\t%s\t%s\tannotations=%d\n", session.ID, session.Status, session.URL, session.AnnotationCount)
-	}
-
-	return nil
-}
-
-func fetchProjectSessionSummaries(ctx context.Context, client *api.Client, sessions []api.Session) ([]projectSessionSummary, int, error) {
-	if len(sessions) == 0 {
-		return nil, 0, nil
-	}
-
-	workerCount := projectSessionFetchWorkerLimit
-	if workerCount > len(sessions) {
-		workerCount = len(sessions)
-	}
-
-	jobs := make(chan projectSessionFetchJob)
-	results := make(chan projectSessionFetchResult, len(sessions))
-
-	var wg sync.WaitGroup
-	wg.Add(workerCount)
-	for range workerCount {
-		go func() {
-			defer wg.Done()
-			for job := range jobs {
-				sessionWithAnnotations, err := client.GetSession(ctx, job.session.ID)
-				if err != nil {
-					results <- projectSessionFetchResult{index: job.index, err: err}
-					continue
-				}
-
-				annotationCount := len(sessionWithAnnotations.Annotations)
-				results <- projectSessionFetchResult{
-					index: job.index,
-					sessionSummary: projectSessionSummary{
-						ID:              job.session.ID,
-						Status:          job.session.Status,
-						URL:             job.session.URL,
-						AnnotationCount: annotationCount,
-					},
-					annotationCount: annotationCount,
-				}
-			}
-		}()
-	}
-
-	for i, session := range sessions {
-		jobs <- projectSessionFetchJob{index: i, session: session}
-	}
-	close(jobs)
-
-	wg.Wait()
-	close(results)
-
-	sessionSummaries := make([]projectSessionSummary, len(sessions))
-	totalAnnotations := 0
-
-	firstErrIndex := len(sessions)
-	var firstErr error
-
-	for result := range results {
-		if result.err != nil {
-			if result.index < firstErrIndex {
-				firstErrIndex = result.index
-				firstErr = result.err
-			}
-			continue
-		}
-
-		sessionSummaries[result.index] = result.sessionSummary
-		totalAnnotations += result.annotationCount
-	}
-
-	if firstErr != nil {
-		return nil, 0, firstErr
-	}
-
-	return sessionSummaries, totalAnnotations, nil
+	return commands.RunProject(ctx, client, args, stdout, stderr)
 }
 
 func runPending(ctx context.Context, client *api.Client, args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: pending <project-id> [--json]")
-	}
-
-	projectID := strings.TrimSpace(args[0])
-	if projectID == "" || strings.HasPrefix(projectID, "-") {
-		return fmt.Errorf("usage: pending <project-id> [--json]")
-	}
-
-	flags := flag.NewFlagSet("pending", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	asJSON := flags.Bool("json", false, "Output JSON")
-	if err := flags.Parse(args[1:]); err != nil {
-		return err
-	}
-	if flags.NArg() > 0 {
-		return fmt.Errorf("usage: pending <project-id> [--json]")
-	}
-
-	pending, err := client.GetPending(ctx, "", projectID)
-	if err != nil {
-		return err
-	}
-
-	if *asJSON {
-		return writeJSON(stdout, pending)
-	}
-
-	fmt.Fprintf(stdout, "Pending annotations: %d\n", pending.Count)
-	for idx, ann := range pending.Annotations {
-		fmt.Fprintf(stdout, "[%d] %s\n", idx+1, ann.ID)
-		fmt.Fprintf(stdout, "    %s\n", ann.Comment)
-		if ann.Element != "" {
-			fmt.Fprintf(stdout, "    Element: %s\n", ann.Element)
-		}
-	}
-
-	return nil
+	return commands.RunPending(ctx, client, args, stdout, stderr)
 }
 
 func runAcknowledge(ctx context.Context, client *api.Client, args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: ack <annotation-id> [--json]")
-	}
-
-	annotationID := strings.TrimSpace(args[0])
-	if annotationID == "" || strings.HasPrefix(annotationID, "-") {
-		return fmt.Errorf("usage: ack <annotation-id> [--json]")
-	}
-
-	flags := flag.NewFlagSet("ack", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	asJSON := flags.Bool("json", false, "Output JSON")
-	if err := flags.Parse(args[1:]); err != nil {
-		return err
-	}
-	if flags.NArg() > 0 {
-		return fmt.Errorf("usage: ack <annotation-id> [--json]")
-	}
-
-	if err := client.Acknowledge(ctx, annotationID); err != nil {
-		return err
-	}
-
-	result := map[string]any{"acknowledged": true, "annotationId": annotationID}
-	if *asJSON {
-		return writeJSON(stdout, result)
-	}
-
-	fmt.Fprintf(stdout, "Acknowledged %s\n", annotationID)
-	return nil
+	return commands.RunAcknowledge(ctx, client, args, stdout, stderr)
 }
 
 func runResolve(ctx context.Context, client *api.Client, args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: resolve <annotation-id> [--summary text] [--json]")
-	}
-
-	annotationID := strings.TrimSpace(args[0])
-	if annotationID == "" || strings.HasPrefix(annotationID, "-") {
-		return fmt.Errorf("usage: resolve <annotation-id> [--summary text] [--json]")
-	}
-
-	flags := flag.NewFlagSet("resolve", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	summary := flags.String("summary", "", "Optional resolution summary")
-	asJSON := flags.Bool("json", false, "Output JSON")
-	if err := flags.Parse(args[1:]); err != nil {
-		return err
-	}
-	if flags.NArg() > 0 {
-		return fmt.Errorf("usage: resolve <annotation-id> [--summary text] [--json]")
-	}
-
-	if err := client.Resolve(ctx, annotationID, *summary); err != nil {
-		return err
-	}
-
-	result := map[string]any{"resolved": true, "annotationId": annotationID}
-	if strings.TrimSpace(*summary) != "" {
-		result["summary"] = strings.TrimSpace(*summary)
-	}
-
-	if *asJSON {
-		return writeJSON(stdout, result)
-	}
-
-	fmt.Fprintf(stdout, "Resolved %s\n", annotationID)
-	return nil
+	return commands.RunResolve(ctx, client, args, stdout, stderr)
 }
 
 func runDismiss(ctx context.Context, client *api.Client, args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: dismiss <annotation-id> --reason text [--json]")
-	}
-
-	annotationID := strings.TrimSpace(args[0])
-	if annotationID == "" || strings.HasPrefix(annotationID, "-") {
-		return fmt.Errorf("usage: dismiss <annotation-id> --reason text [--json]")
-	}
-
-	flags := flag.NewFlagSet("dismiss", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	reason := flags.String("reason", "", "Dismissal reason (required)")
-	asJSON := flags.Bool("json", false, "Output JSON")
-	if err := flags.Parse(args[1:]); err != nil {
-		return err
-	}
-	if flags.NArg() > 0 {
-		return fmt.Errorf("usage: dismiss <annotation-id> --reason text [--json]")
-	}
-	if strings.TrimSpace(*reason) == "" {
-		return fmt.Errorf("dismiss requires --reason")
-	}
-
-	if err := client.Dismiss(ctx, annotationID, *reason); err != nil {
-		return err
-	}
-
-	result := map[string]any{"dismissed": true, "annotationId": annotationID, "reason": strings.TrimSpace(*reason)}
-	if *asJSON {
-		return writeJSON(stdout, result)
-	}
-
-	fmt.Fprintf(stdout, "Dismissed %s\n", annotationID)
-	return nil
+	return commands.RunDismiss(ctx, client, args, stdout, stderr)
 }
 
 func runReply(ctx context.Context, client *api.Client, args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: reply <annotation-id> --message text [--json]")
-	}
-
-	annotationID := strings.TrimSpace(args[0])
-	if annotationID == "" || strings.HasPrefix(annotationID, "-") {
-		return fmt.Errorf("usage: reply <annotation-id> --message text [--json]")
-	}
-
-	flags := flag.NewFlagSet("reply", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	message := flags.String("message", "", "Reply message (required)")
-	asJSON := flags.Bool("json", false, "Output JSON")
-	if err := flags.Parse(args[1:]); err != nil {
-		return err
-	}
-	if flags.NArg() > 0 {
-		return fmt.Errorf("usage: reply <annotation-id> --message text [--json]")
-	}
-	if strings.TrimSpace(*message) == "" {
-		return fmt.Errorf("reply requires --message")
-	}
-
-	if err := client.Reply(ctx, annotationID, *message); err != nil {
-		return err
-	}
-
-	result := map[string]any{"replied": true, "annotationId": annotationID, "message": strings.TrimSpace(*message)}
-	if *asJSON {
-		return writeJSON(stdout, result)
-	}
-
-	fmt.Fprintf(stdout, "Replied to %s\n", annotationID)
-	return nil
+	return commands.RunReply(ctx, client, args, stdout, stderr)
 }
 
 func runWatch(ctx context.Context, client *api.Client, args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: watch <project-id> [--batch-window 10] [--timeout 300] [--json]")
-	}
-
-	projectID := strings.TrimSpace(args[0])
-	if projectID == "" || strings.HasPrefix(projectID, "-") {
-		return fmt.Errorf("usage: watch <project-id> [--batch-window 10] [--timeout 300] [--json]")
-	}
-
-	flags := flag.NewFlagSet("watch", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	batchWindow := flags.Int("batch-window", 10, "Seconds to collect after first event (1-60)")
-	timeout := flags.Int("timeout", 300, "Seconds to wait for first event (1-300)")
-	asJSON := flags.Bool("json", false, "Output JSON")
-	if err := flags.Parse(args[1:]); err != nil {
-		return err
-	}
-	if flags.NArg() > 0 {
-		return fmt.Errorf("usage: watch <project-id> [--batch-window 10] [--timeout 300] [--json]")
-	}
-
-	output, err := client.Watch(ctx, api.WatchOptions{
-		ProjectID:   projectID,
-		BatchWindow: time.Duration(*batchWindow) * time.Second,
-		Timeout:     time.Duration(*timeout) * time.Second,
-	})
-	if err != nil {
-		return err
-	}
-
-	if *asJSON {
-		return writeJSON(stdout, output)
-	}
-
-	if output.Timeout {
-		fmt.Fprintln(stdout, output.Message)
-		return nil
-	}
-
-	fmt.Fprintf(stdout, "Received %d annotation(s)\n", output.Count)
-	for idx, ann := range output.Annotations {
-		fmt.Fprintf(stdout, "[%d] %s\n", idx+1, ann.ID)
-		fmt.Fprintf(stdout, "    %s\n", ann.Comment)
-		if ann.SessionID != "" {
-			fmt.Fprintf(stdout, "    Session: %s\n", ann.SessionID)
-		}
-	}
-	return nil
+	return commands.RunWatch(ctx, client, args, stdout, stderr)
 }
 
 func runGenerate(args []string, stdout, stderr io.Writer) int {
@@ -602,12 +189,6 @@ func runGenerate(args []string, stdout, stderr io.Writer) int {
 	}
 
 	return 0
-}
-
-func writeJSON(writer io.Writer, value any) error {
-	encoder := json.NewEncoder(writer)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(value)
 }
 
 func printUsage(writer io.Writer) {
