@@ -92,6 +92,40 @@ func TestWatchUsesSessionEventsPath(t *testing.T) {
 	}
 }
 
+func TestWatchUsesProjectEventsPath(t *testing.T) {
+	testServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.RequestURI() {
+		case "/pending?projectId=project-alpha":
+			_, _ = writer.Write([]byte(`{"count":0,"annotations":[]}`))
+		case "/events?agent=true&projectId=project-alpha":
+			writer.Header().Set("Content-Type", "text/event-stream")
+			flusher, ok := writer.(http.Flusher)
+			if !ok {
+				t.Fatal("missing flusher")
+			}
+			_, _ = writer.Write([]byte(`data: {"type":"annotation.created","sessionId":"s1","sequence":1,"payload":{"id":"a1","comment":"Fix","element":"button","elementPath":"body > button"}}` + "\n\n"))
+			flusher.Flush()
+			<-request.Context().Done()
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.RequestURI())
+		}
+	}))
+	defer testServer.Close()
+
+	client := NewClient(testServer.URL)
+	output, err := client.Watch(context.Background(), WatchOptions{
+		ProjectID:   "project-alpha",
+		BatchWindow: 50 * time.Millisecond,
+		Timeout:     2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Watch returned error: %v", err)
+	}
+	if output.Count != 1 || output.Annotations[0].ID != "a1" {
+		t.Fatalf("unexpected output: %#v", output)
+	}
+}
+
 func TestHandleEventPayloadFilters(t *testing.T) {
 	client := NewClient("http://localhost:4747")
 	out := make(chan Annotation, 10)
@@ -185,7 +219,7 @@ func TestStreamAnnotationsDirectPaths(t *testing.T) {
 	client := NewClient("http://[::1")
 	errCh := make(chan error, 1)
 	out := make(chan Annotation, 1)
-	client.streamAnnotations(context.Background(), "", out, errCh)
+	client.streamAnnotations(context.Background(), "", "", out, errCh)
 	err := <-errCh
 	if err == nil || !strings.Contains(err.Error(), "creating watch request") {
 		t.Fatalf("expected request creation error, got %v", err)
@@ -198,7 +232,7 @@ func TestStreamAnnotationsDirectPaths(t *testing.T) {
 
 	client = NewClient(notOKServer.URL)
 	errCh = make(chan error, 1)
-	client.streamAnnotations(context.Background(), "", out, errCh)
+	client.streamAnnotations(context.Background(), "", "", out, errCh)
 	err = <-errCh
 	if err == nil || !strings.Contains(err.Error(), "http 503") {
 		t.Fatalf("expected non-200 error, got %v", err)
@@ -215,7 +249,7 @@ func TestStreamAnnotationsDirectPaths(t *testing.T) {
 
 	client = NewClient(closedServer.URL)
 	errCh = make(chan error, 1)
-	client.streamAnnotations(context.Background(), "", out, errCh)
+	client.streamAnnotations(context.Background(), "", "", out, errCh)
 	err = <-errCh
 	if err == nil || !strings.Contains(err.Error(), "closed unexpectedly") {
 		t.Fatalf("expected unexpected close error, got %v", err)
@@ -224,7 +258,7 @@ func TestStreamAnnotationsDirectPaths(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	errCh = make(chan error, 1)
-	client.streamAnnotations(ctx, "", out, errCh)
+	client.streamAnnotations(ctx, "", "", out, errCh)
 	err = <-errCh
 	if err != nil {
 		t.Fatalf("expected nil error on canceled context, got %v", err)

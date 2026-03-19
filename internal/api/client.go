@@ -33,9 +33,14 @@ func NewClient(baseURL string) *Client {
 	}
 }
 
-func (c *Client) ListSessions(ctx context.Context) ([]Session, error) {
+func (c *Client) ListSessions(ctx context.Context, projectID string) ([]Session, error) {
 	var sessions []Session
-	if err := c.doJSON(ctx, http.MethodGet, "/sessions", nil, &sessions); err != nil {
+	path := "/sessions"
+	if strings.TrimSpace(projectID) != "" {
+		path = fmt.Sprintf("/sessions?projectId=%s", url.QueryEscape(strings.TrimSpace(projectID)))
+	}
+
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &sessions); err != nil {
 		return nil, fmt.Errorf("listing sessions: %w", err)
 	}
 	return sessions, nil
@@ -50,11 +55,16 @@ func (c *Client) GetSession(ctx context.Context, sessionID string) (*SessionWith
 	return &session, nil
 }
 
-func (c *Client) GetPending(ctx context.Context, sessionID string) (*PendingResponse, error) {
+func (c *Client) GetPending(ctx context.Context, sessionID, projectID string) (*PendingResponse, error) {
 	var pending PendingResponse
 	path := "/pending"
-	if sessionID != "" {
-		path = fmt.Sprintf("/sessions/%s/pending", url.PathEscape(sessionID))
+	trimmedSessionID := strings.TrimSpace(sessionID)
+	trimmedProjectID := strings.TrimSpace(projectID)
+
+	if trimmedSessionID != "" {
+		path = fmt.Sprintf("/sessions/%s/pending", url.PathEscape(trimmedSessionID))
+	} else if trimmedProjectID != "" {
+		path = fmt.Sprintf("/pending?projectId=%s", url.QueryEscape(trimmedProjectID))
 	}
 
 	if err := c.doJSON(ctx, http.MethodGet, path, nil, &pending); err != nil {

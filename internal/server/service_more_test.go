@@ -181,6 +181,69 @@ func TestHTTPAPIBranches(t *testing.T) {
 	}
 }
 
+func TestProjectScopedPendingAndInitialSync(t *testing.T) {
+	t.Setenv("AGENTATION_STORE", "memory")
+	service := NewService("127.0.0.1:0", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ts := httptest.NewServer(service.httpServer.Handler)
+	defer ts.Close()
+
+	sessionAlpha := service.store.CreateSession("http://example.com/alpha", "project-alpha")
+	sessionBeta := service.store.CreateSession("http://example.com/beta", "project-beta")
+	_, _ = service.store.AddAnnotation(sessionAlpha.ID, Annotation{Comment: "Alpha", Element: "button", ElementPath: "body > button"})
+	_, _ = service.store.AddAnnotation(sessionBeta.ID, Annotation{Comment: "Beta", Element: "div", ElementPath: "body > div"})
+
+	response, err := http.Get(ts.URL + "/pending?projectId=project-alpha")
+	if err != nil {
+		t.Fatalf("pending request failed: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		content, _ := io.ReadAll(response.Body)
+		t.Fatalf("pending status = %d body=%s", response.StatusCode, string(content))
+	}
+
+	var pending pendingResponse
+	if err := json.NewDecoder(response.Body).Decode(&pending); err != nil {
+		t.Fatalf("pending decode failed: %v", err)
+	}
+	if pending.Count != 1 {
+		t.Fatalf("pending.Count = %d, want 1", pending.Count)
+	}
+	if pending.Annotations[0].Comment != "Alpha" {
+		t.Fatalf("pending annotation comment = %q, want %q", pending.Annotations[0].Comment, "Alpha")
+	}
+
+	sessionsResponse, err := http.Get(ts.URL + "/sessions?projectId=project-alpha")
+	if err != nil {
+		t.Fatalf("sessions request failed: %v", err)
+	}
+	defer sessionsResponse.Body.Close()
+	if sessionsResponse.StatusCode != http.StatusOK {
+		content, _ := io.ReadAll(sessionsResponse.Body)
+		t.Fatalf("sessions status = %d body=%s", sessionsResponse.StatusCode, string(content))
+	}
+	var sessions []Session
+	if err := json.NewDecoder(sessionsResponse.Body).Decode(&sessions); err != nil {
+		t.Fatalf("sessions decode failed: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].ProjectID != "project-alpha" {
+		t.Fatalf("unexpected sessions response: %#v", sessions)
+	}
+
+	writer := newBufferSSEWriter(false)
+	service.sendInitialSync(writer, "", "project-alpha")
+	output := writer.String()
+	if strings.Contains(output, "Beta") {
+		t.Fatalf("expected project-scoped initial sync to exclude beta annotation: %s", output)
+	}
+	if !strings.Contains(output, "Alpha") {
+		t.Fatalf("expected project-scoped initial sync to include alpha annotation: %s", output)
+	}
+	if !strings.Contains(output, `"projectId":"project-alpha"`) {
+		t.Fatalf("expected sync payload to include project ID: %s", output)
+	}
+}
+
 func TestServiceUtilitiesAndSSEHelpers(t *testing.T) {
 	t.Setenv("AGENTATION_STORE", "memory")
 	service := NewService("127.0.0.1:0", slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -267,7 +330,7 @@ func TestStreamFunctionsAndSync(t *testing.T) {
 	_, _ = service.store.AddAnnotation(s2.ID, Annotation{Comment: "B", Element: "div", ElementPath: "body > div"})
 
 	writer := newBufferSSEWriter(false)
-	service.sendInitialSync(writer, "example.com")
+	service.sendInitialSync(writer, "example.com", "")
 	if !strings.Contains(writer.String(), "sync.complete") || !strings.Contains(writer.String(), "annotation.created") {
 		t.Fatalf("sendInitialSync output missing expected events: %s", writer.String())
 	}
@@ -291,7 +354,7 @@ func TestStreamFunctionsAndSync(t *testing.T) {
 		time.Sleep(30 * time.Millisecond)
 		cancel2()
 	}()
-	service.streamGlobalEvents(ctx2, globalWriter, globalEvents, "example.com")
+	service.streamGlobalEvents(ctx2, globalWriter, globalEvents, "example.com", "")
 	if strings.Contains(globalWriter.String(), "skip") {
 		t.Fatal("streamGlobalEvents should filter unmatched domains")
 	}

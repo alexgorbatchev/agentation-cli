@@ -47,6 +47,7 @@ type PendingResponse struct {
 
 type WatchOptions struct {
 	SessionID   string
+	ProjectID   string
 	BatchWindow time.Duration
 	Timeout     time.Duration
 }

@@ -38,7 +38,7 @@ func TestListSessionsAndGetSession(t *testing.T) {
 
 	client := NewClient(testServer.URL)
 
-	sessions, err := client.ListSessions(context.Background())
+	sessions, err := client.ListSessions(context.Background(), "")
 	if err != nil {
 		t.Fatalf("ListSessions returned error: %v", err)
 	}
@@ -55,24 +55,45 @@ func TestListSessionsAndGetSession(t *testing.T) {
 	}
 }
 
+func TestListSessionsByProjectID(t *testing.T) {
+	var requestURI string
+	testServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requestURI = request.URL.RequestURI()
+		_, _ = writer.Write([]byte(`[]`))
+	}))
+	defer testServer.Close()
+
+	client := NewClient(testServer.URL)
+	_, err := client.ListSessions(context.Background(), "project-1")
+	if err != nil {
+		t.Fatalf("ListSessions(project) returned error: %v", err)
+	}
+	if requestURI != "/sessions?projectId=project-1" {
+		t.Fatalf("requestURI = %q, want %q", requestURI, "/sessions?projectId=project-1")
+	}
+}
+
 func TestGetPendingAllAndBySession(t *testing.T) {
 	calls := make(map[string]int)
 	testServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		calls[request.URL.Path]++
-		switch request.URL.Path {
+		requestPath := request.URL.RequestURI()
+		calls[requestPath]++
+		switch requestPath {
 		case "/pending":
 			_, _ = writer.Write([]byte(`{"count":1,"annotations":[{"id":"a1","sessionId":"s1","comment":"Fix","element":"button","elementPath":"body > button"}]}`))
+		case "/pending?projectId=p1":
+			_, _ = writer.Write([]byte(`{"count":0,"annotations":[]}`))
 		case "/sessions/s1/pending":
 			_, _ = writer.Write([]byte(`{"count":0,"annotations":[]}`))
 		default:
-			t.Fatalf("unexpected path: %s", request.URL.Path)
+			t.Fatalf("unexpected path: %s", requestPath)
 		}
 	}))
 	defer testServer.Close()
 
 	client := NewClient(testServer.URL)
 
-	pendingAll, err := client.GetPending(context.Background(), "")
+	pendingAll, err := client.GetPending(context.Background(), "", "")
 	if err != nil {
 		t.Fatalf("GetPending(all) returned error: %v", err)
 	}
@@ -80,7 +101,15 @@ func TestGetPendingAllAndBySession(t *testing.T) {
 		t.Fatalf("pendingAll.Count = %d, want 1", pendingAll.Count)
 	}
 
-	pendingSession, err := client.GetPending(context.Background(), "s1")
+	pendingProject, err := client.GetPending(context.Background(), "", "p1")
+	if err != nil {
+		t.Fatalf("GetPending(project) returned error: %v", err)
+	}
+	if pendingProject.Count != 0 {
+		t.Fatalf("pendingProject.Count = %d, want 0", pendingProject.Count)
+	}
+
+	pendingSession, err := client.GetPending(context.Background(), "s1", "")
 	if err != nil {
 		t.Fatalf("GetPending(session) returned error: %v", err)
 	}
@@ -88,7 +117,7 @@ func TestGetPendingAllAndBySession(t *testing.T) {
 		t.Fatalf("pendingSession.Count = %d, want 0", pendingSession.Count)
 	}
 
-	if calls["/pending"] != 1 || calls["/sessions/s1/pending"] != 1 {
+	if calls["/pending"] != 1 || calls["/pending?projectId=p1"] != 1 || calls["/sessions/s1/pending"] != 1 {
 		t.Fatalf("unexpected calls: %#v", calls)
 	}
 }
@@ -158,7 +187,7 @@ func TestDoJSONErrorPaths(t *testing.T) {
 	defer invalidJSON.Close()
 
 	client = NewClient(invalidJSON.URL)
-	_, err = client.ListSessions(context.Background())
+	_, err = client.ListSessions(context.Background(), "")
 	if err == nil || !strings.Contains(err.Error(), "decoding response") {
 		t.Fatalf("expected decode error, got %v", err)
 	}

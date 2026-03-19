@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -252,6 +253,34 @@ func (s *Store) GetAllAnnotationsNeedingAttention() []Annotation {
 
 	annotations := make([]Annotation, 0)
 	for _, annotation := range s.annotations {
+		if needsAttention(annotation) {
+			annotations = append(annotations, annotation)
+		}
+	}
+	return annotations
+}
+
+func (s *Store) GetAllAnnotationsNeedingAttentionByProjectID(projectID string) []Annotation {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	trimmedProjectID := strings.TrimSpace(projectID)
+	if trimmedProjectID == "" {
+		return []Annotation{}
+	}
+
+	sessionIDs := make(map[string]struct{})
+	for _, session := range s.sessions {
+		if session.ProjectID == trimmedProjectID {
+			sessionIDs[session.ID] = struct{}{}
+		}
+	}
+
+	annotations := make([]Annotation, 0)
+	for _, annotation := range s.annotations {
+		if _, ok := sessionIDs[annotation.SessionID]; !ok {
+			continue
+		}
 		if needsAttention(annotation) {
 			annotations = append(annotations, annotation)
 		}

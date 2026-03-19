@@ -129,7 +129,19 @@ func (s *Service) handleStatus(writer http.ResponseWriter, request *http.Request
 }
 
 func (s *Service) handleListSessions(writer http.ResponseWriter, request *http.Request) {
-	writeJSON(writer, http.StatusOK, s.store.ListSessions())
+	projectID := strings.TrimSpace(request.URL.Query().Get("projectId"))
+	sessions := s.store.ListSessions()
+	if projectID != "" {
+		filtered := make([]Session, 0)
+		for _, session := range sessions {
+			if session.ProjectID == projectID {
+				filtered = append(filtered, session)
+			}
+		}
+		sessions = filtered
+	}
+
+	writeJSON(writer, http.StatusOK, sessions)
 }
 
 func (s *Service) handleCreateSession(writer http.ResponseWriter, request *http.Request) {
@@ -261,7 +273,13 @@ func (s *Service) handleSessionPending(writer http.ResponseWriter, request *http
 }
 
 func (s *Service) handleAllPending(writer http.ResponseWriter, request *http.Request) {
+	projectID := strings.TrimSpace(request.URL.Query().Get("projectId"))
+
 	pending := s.store.GetAllAnnotationsNeedingAttention()
+	if projectID != "" {
+		pending = s.store.GetAllAnnotationsNeedingAttentionByProjectID(projectID)
+	}
+
 	writeJSON(writer, http.StatusOK, pendingResponse{Count: len(pending), Annotations: pending})
 }
 
@@ -347,6 +365,7 @@ func (s *Service) handleSessionEvents(writer http.ResponseWriter, request *http.
 func (s *Service) handleGlobalEvents(writer http.ResponseWriter, request *http.Request) {
 	isAgent := request.URL.Query().Get("agent") == "true"
 	domain := strings.TrimSpace(request.URL.Query().Get("domain"))
+	projectID := strings.TrimSpace(request.URL.Query().Get("projectId"))
 
 	if !startSSE(writer) {
 		writeError(writer, http.StatusInternalServerError, "streaming not supported")
@@ -358,12 +377,12 @@ func (s *Service) handleGlobalEvents(writer http.ResponseWriter, request *http.R
 	if isAgent {
 		atomic.AddInt64(&s.agentListeners, 1)
 		defer atomic.AddInt64(&s.agentListeners, -1)
-		s.sendInitialSync(writer, domain)
+		s.sendInitialSync(writer, domain, projectID)
 	}
 
 	events, unsubscribe := s.store.SubscribeAll()
 	defer unsubscribe()
-	s.streamGlobalEvents(request.Context(), writer, events, domain)
+	s.streamGlobalEvents(request.Context(), writer, events, domain, projectID)
 }
 
 func (s *Service) streamEvents(ctx context.Context, writer http.ResponseWriter, events <-chan Event) {
@@ -388,7 +407,7 @@ func (s *Service) streamEvents(ctx context.Context, writer http.ResponseWriter, 
 	}
 }
 
-func (s *Service) streamGlobalEvents(ctx context.Context, writer http.ResponseWriter, events <-chan Event, domain string) {
+func (s *Service) streamGlobalEvents(ctx context.Context, writer http.ResponseWriter, events <-chan Event, domain, projectID string) {
 	keepAlive := time.NewTicker(30 * time.Second)
 	defer keepAlive.Stop()
 
@@ -396,6 +415,9 @@ func (s *Service) streamGlobalEvents(ctx context.Context, writer http.ResponseWr
 		select {
 		case event := <-events:
 			if domain != "" && !s.eventMatchesDomain(event, domain) {
+				continue
+			}
+			if projectID != "" && !s.eventMatchesProjectID(event, projectID) {
 				continue
 			}
 			if err := writeSSEEvent(writer, event); err != nil {
@@ -413,10 +435,15 @@ func (s *Service) streamGlobalEvents(ctx context.Context, writer http.ResponseWr
 	}
 }
 
-func (s *Service) sendInitialSync(writer http.ResponseWriter, domain string) {
+func (s *Service) sendInitialSync(writer http.ResponseWriter, domain, projectID string) {
 	count := 0
+	trimmedProjectID := strings.TrimSpace(projectID)
+
 	for _, session := range s.store.ListSessions() {
 		if domain != "" && !sessionMatchesDomain(session, domain) {
+			continue
+		}
+		if trimmedProjectID != "" && session.ProjectID != trimmedProjectID {
 			continue
 		}
 
@@ -438,6 +465,7 @@ func (s *Service) sendInitialSync(writer http.ResponseWriter, domain string) {
 
 	syncPayload := map[string]any{
 		"domain":    valueOr(domain, "all"),
+		"projectId": valueOr(trimmedProjectID, "all"),
 		"count":     count,
 		"timestamp": nowISO(),
 	}
@@ -450,6 +478,14 @@ func (s *Service) eventMatchesDomain(event Event, domain string) bool {
 		return false
 	}
 	return sessionMatchesDomain(session, domain)
+}
+
+func (s *Service) eventMatchesProjectID(event Event, projectID string) bool {
+	session, ok := s.store.GetSession(event.SessionID)
+	if !ok {
+		return false
+	}
+	return strings.TrimSpace(session.ProjectID) == strings.TrimSpace(projectID)
 }
 
 func sessionMatchesDomain(session Session, domain string) bool {
