@@ -57,6 +57,33 @@ agentation pending project-alpha --json
 agentation watch project-alpha --timeout 300 --batch-window 10 --json
 ```
 
+## Router token auth (`AGENTATION_ROUTER_TOKEN`)
+
+When `AGENTATION_ROUTER_TOKEN` is set, router requests that can mutate session state or trigger editor side effects require auth:
+
+- `POST /register`
+- `POST /unregister`
+- `GET|POST /open`
+
+Provide the token using either:
+
+- `X-Agentation-Token: <token>`
+- `Authorization: Bearer <token>`
+
+`/ping` remains unauthenticated for liveness/session resolution checks.
+
+## SSE delivery semantics (`watch` / `/events`)
+
+`agentation watch` first drains `/pending`, then listens on SSE (`/events?agent=true` or `/sessions/{id}/events?agent=true`).
+
+Operational guarantees/limits:
+
+- Events include a monotonically increasing sequence ID (`id` in SSE frames).
+- Server keepalives are emitted as SSE comments (`: ping`) every ~30s.
+- Delivery uses explicit backpressure semantics to avoid silent event drops under load.
+- Trade-off: a consistently slow consumer can increase end-to-end latency while pressure is applied.
+- `/pending` remains the source of truth for reconciliation if a stream disconnects.
+
 ## Skill generation helpers
 
 ```bash
@@ -103,7 +130,7 @@ Notes:
 - `AGENTATION_SERVER_LOG_FILE` (override server log file)
 - `AGENTATION_ROUTER_LOG_FILE` (override router log file)
 - `AGENTATION_ROUTER_ADDRESS` (legacy fallback router address if `AGENTATION_ROUTER_ADDR` is unset)
-- `AGENTATION_ROUTER_TOKEN` (optional auth token for mutating router endpoints)
+- `AGENTATION_ROUTER_TOKEN` (optional auth token; when set, required by `/register`, `/unregister`, and `/open`)
 - `AGENTATION_ROUTER_BODY_LIMIT` (max router request body size)
 - `AGENTATION_ROUTER_FORWARD_TIMEOUT` (router forward timeout)
 - `AGENTATION_ROUTER_READ_TIMEOUT` / `AGENTATION_ROUTER_WRITE_TIMEOUT`
