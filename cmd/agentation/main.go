@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -13,6 +14,9 @@ import (
 	"github.com/benjitaylor/agentation/cli/internal/api"
 	"github.com/benjitaylor/agentation/cli/internal/lifecycle"
 )
+
+//go:embed embedded/agentation-fix-loop-skill.md
+var fixLoopSkillContent string
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -45,6 +49,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runWithAPICommand(ctx, commandArgs, stdout, stderr, runReply)
 	case "watch":
 		return runWithAPICommand(ctx, commandArgs, stdout, stderr, runWatch)
+	case "generate":
+		return runGenerate(commandArgs, stdout, stderr)
 	case "start":
 		return lifecycle.RunStart(commandArgs, stdout, stderr)
 	case "stop":
@@ -359,6 +365,33 @@ func runWatch(ctx context.Context, client *api.Client, args []string, stdout, st
 	return nil
 }
 
+func runGenerate(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("generate", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	fixLoopSkill := flags.Bool("fix-loop-skill", false, "Print embedded Agentation fix-loop skill markdown")
+	if err := flags.Parse(args); err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return 1
+	}
+
+	if flags.NArg() > 0 {
+		fmt.Fprintln(stderr, "error: usage: generate --fix-loop-skill")
+		return 1
+	}
+
+	if !*fixLoopSkill {
+		fmt.Fprintln(stderr, "error: usage: generate --fix-loop-skill")
+		return 1
+	}
+
+	if _, err := io.WriteString(stdout, strings.TrimRight(fixLoopSkillContent, "\n")+"\n"); err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return 1
+	}
+
+	return 0
+}
+
 func writeJSON(writer io.Writer, value any) error {
 	encoder := json.NewEncoder(writer)
 	encoder.SetIndent("", "  ")
@@ -377,6 +410,7 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  dismiss [--base-url <url>] <annotation-id>          Dismiss annotation")
 	fmt.Fprintln(writer, "  reply [--base-url <url>] <annotation-id>            Add thread reply")
 	fmt.Fprintln(writer, "  watch [--base-url <url>]                            Wait for new annotations/thread replies")
+	fmt.Fprintln(writer, "  generate --fix-loop-skill                           Print embedded Agentation fix-loop skill")
 	fmt.Fprintln(writer, "  start                                                Start local services (single PID)")
 	fmt.Fprintln(writer, "  stop                                                 Stop local services (single PID)")
 	fmt.Fprintln(writer, "  status                                               Show local service status")
@@ -387,6 +421,7 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  agentation ack --base-url http://127.0.0.1:4747 ann_123")
 	fmt.Fprintln(writer, "  agentation resolve ann_123 --summary \"Updated spacing\"")
 	fmt.Fprintln(writer, "  agentation watch --batch-window 5 --timeout 120 --json")
+	fmt.Fprintln(writer, "  agentation generate --fix-loop-skill")
 	fmt.Fprintln(writer, "  agentation start")
 	fmt.Fprintln(writer, "  AGENTATION_SERVER_ADDR=127.0.0.1:5757 AGENTATION_ROUTER_ADDR=127.0.0.1:8787 agentation start")
 	fmt.Fprintln(writer, "  AGENTATION_SERVER_ADDR=0 agentation start")

@@ -32,6 +32,7 @@ Commands:
 - `dismiss [--base-url <url>] <annotation-id> --reason "..."`
 - `reply [--base-url <url>] <annotation-id> --message "..."`
 - `watch [--base-url <url>] [--session <id>] [--batch-window 10] [--timeout 120]`
+- `generate --fix-loop-skill`
 - `start [--server-addr host:port|0] [--router-addr host:port|0] [--foreground|--background]`
 - `stop`
 - `status`
@@ -43,6 +44,14 @@ You can set a default API endpoint with:
 ```bash
 AGENTATION_BASE_URL=http://127.0.0.1:4747 agentation pending --json
 ```
+
+## Skill generation helpers
+
+```bash
+agentation generate --fix-loop-skill
+```
+
+This prints the embedded Agentation fix-loop skill markdown from the CLI binary.
 
 ## Lifecycle management
 
