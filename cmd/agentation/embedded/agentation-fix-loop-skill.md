@@ -17,8 +17,9 @@ Watch for annotations from the Agentation toolbar and fix each one in the codeba
 ## CLI commands used by this skill
 
 - `agentation start` / `agentation stop` / `agentation status`
-- `agentation pending --json`
-- `agentation watch --json`
+- `agentation projects --json`
+- `agentation pending <project-id> --json`
+- `agentation watch <project-id> --json`
 - `agentation ack <id>`
 - `agentation resolve <id> --summary "..."`
 - `agentation reply <id> --message "..."`
@@ -43,7 +44,7 @@ agentation status
 Then verify API reachability (default `http://127.0.0.1:4747`):
 
 ```bash
-agentation pending --json >/dev/null
+agentation projects --json >/dev/null
 ```
 
 If not running or unreachable, **start it before doing anything else**:
@@ -58,7 +59,7 @@ Re-check after start:
 
 ```bash
 agentation status
-agentation pending --json >/dev/null
+agentation projects --json >/dev/null
 ```
 
 If you only want the HTTP API without router for this run:
@@ -67,10 +68,26 @@ If you only want the HTTP API without router for this run:
 AGENTATION_ROUTER_ADDR=0 agentation start --background
 ```
 
-### 3) Fetch pending work before waiting
+### 3) Determine the project ID and fetch pending work
+
+Quickly extract project IDs from your app code:
 
 ```bash
-agentation pending --json
+rg -n --glob '*.{tsx,ts,jsx,js}' '<Agentation[^>]*projectId='
+```
+
+If you want to extract a literal string value quickly (when set as `projectId="..."`):
+
+```bash
+rg -o --no-filename --glob '*.{tsx,ts,jsx,js}' 'projectId="[^"]+"' \
+  | head -n1 \
+  | sed -E 's/projectId="([^"]+)"/\1/'
+```
+
+Then fetch the initial batch:
+
+```bash
+agentation pending <project-id> --json
 ```
 
 Process that batch first, then enter watch mode.
@@ -86,7 +103,7 @@ Process that batch first, then enter watch mode.
 1. Call:
 
 ```bash
-agentation watch --timeout 300 --batch-window 10 --json
+agentation watch <project-id> --timeout 300 --batch-window 10 --json
 ```
 
 2. For each annotation in the returned batch:
@@ -137,41 +154,42 @@ agentation dismiss <annotation-id> --reason "Not actionable because ..."
 - Process annotations in received order.
 - Only resolve once the requested change is implemented.
 
-## Optional session-scoped loop
+## Required project-scoped loop
 
-If user wants only one page/session, scope commands with `--session`:
+Use `<project-id>` as the first argument for all pending/watch commands:
 
 ```bash
-agentation pending --session <session-id> --json
-agentation watch --session <session-id> --timeout 300 --batch-window 10 --json
+agentation projects --json
+agentation pending <project-id> --json
+agentation watch <project-id> --timeout 300 --batch-window 10 --json
 ```
 
 ## Loop template
 
 ```text
 Round 1:
-  agentation pending --json
+  agentation pending <project-id> --json
   -> process all returned annotations
 
 Round 2:
-  agentation watch --timeout 300 --batch-window 10 --json
+  agentation watch <project-id> --timeout 300 --batch-window 10 --json
   -> got 2 annotations
   -> ack #1, fix, resolve #1
   -> ack #2, reply (needs clarification)
 
 Round 3:
-  agentation watch --timeout 300 --batch-window 10 --json
+  agentation watch <project-id> --timeout 300 --batch-window 10 --json
   -> got 1 annotation (clarification follow-up)
   -> ack, fix, resolve
 
 Round 4:
-  agentation watch --timeout 300 --batch-window 10 --json
+  agentation watch <project-id> --timeout 300 --batch-window 10 --json
   -> timeout true, no annotations
   -> exit (or continue if user requested persistent watch mode)
 ```
 
 ## Troubleshooting
 
-- `agentation pending` fails: Agentation is not running or base URL is wrong (`agentation start --background`).
+- `agentation pending` fails: Agentation is not running, base URL is wrong (`agentation start --background`), or `<project-id>` is missing.
 - If using non-default server URL, pass `--base-url` or set `AGENTATION_BASE_URL`.
 - If frontend keeps creating new sessions unexpectedly, verify localStorage/session behavior in the host app or Storybook setup.
