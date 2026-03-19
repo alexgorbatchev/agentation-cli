@@ -362,10 +362,10 @@ func (s *Store) publish(event Event) {
 	s.subsMu.RUnlock()
 
 	for _, ch := range global {
-		nonBlockingSend(ch, event)
+		sendWithBackpressure(ch, event)
 	}
 	for _, ch := range session {
-		nonBlockingSend(ch, event)
+		sendWithBackpressure(ch, event)
 	}
 }
 
@@ -405,11 +405,8 @@ func (s *Store) persistEventLocked(event Event) {
 	}
 }
 
-func nonBlockingSend(ch chan Event, event Event) {
-	select {
-	case ch <- event:
-	default:
-	}
+func sendWithBackpressure(ch chan Event, event Event) {
+	ch <- event
 }
 
 func needsAttention(annotation Annotation) bool {
