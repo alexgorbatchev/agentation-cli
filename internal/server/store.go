@@ -68,7 +68,6 @@ func NewStore() *Store {
 
 func (s *Store) CreateSession(url, projectID string) Session {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	session := Session{
 		ID:        s.newID(),
@@ -79,7 +78,10 @@ func (s *Store) CreateSession(url, projectID string) Session {
 	}
 	s.sessions[session.ID] = session
 	s.persistSessionLocked(session)
-	s.emitLocked(EventSessionCreated, session.ID, session)
+	event := s.emitLocked(EventSessionCreated, session.ID, session)
+
+	s.mu.Unlock()
+	s.publish(event)
 	return session
 }
 
@@ -125,9 +127,9 @@ func (s *Store) GetSessionWithAnnotations(id string) (SessionWithAnnotations, bo
 
 func (s *Store) AddAnnotation(sessionID string, annotation Annotation) (Annotation, bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if _, ok := s.sessions[sessionID]; !ok {
+		s.mu.Unlock()
 		return Annotation{}, false
 	}
 
@@ -144,7 +146,10 @@ func (s *Store) AddAnnotation(sessionID string, annotation Annotation) (Annotati
 
 	s.annotations[annotation.ID] = annotation
 	s.persistAnnotationLocked(annotation)
-	s.emitLocked(EventAnnotationCreated, sessionID, annotation)
+	event := s.emitLocked(EventAnnotationCreated, sessionID, annotation)
+
+	s.mu.Unlock()
+	s.publish(event)
 	return annotation, true
 }
 
@@ -157,10 +162,10 @@ func (s *Store) GetAnnotation(id string) (Annotation, bool) {
 
 func (s *Store) UpdateAnnotation(id string, patch map[string]any) (Annotation, bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	annotation, ok := s.annotations[id]
 	if !ok {
+		s.mu.Unlock()
 		return Annotation{}, false
 	}
 
@@ -189,31 +194,37 @@ func (s *Store) UpdateAnnotation(id string, patch map[string]any) (Annotation, b
 	annotation.UpdatedAt = nowISO()
 	s.annotations[id] = annotation
 	s.persistAnnotationLocked(annotation)
-	s.emitLocked(EventAnnotationUpdated, annotation.SessionID, annotation)
+	event := s.emitLocked(EventAnnotationUpdated, annotation.SessionID, annotation)
+
+	s.mu.Unlock()
+	s.publish(event)
 	return annotation, true
 }
 
 func (s *Store) DeleteAnnotation(id string) (Annotation, bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	annotation, ok := s.annotations[id]
 	if !ok {
+		s.mu.Unlock()
 		return Annotation{}, false
 	}
 
 	delete(s.annotations, id)
 	s.deleteAnnotationLocked(id)
-	s.emitLocked(EventAnnotationDeleted, annotation.SessionID, annotation)
+	event := s.emitLocked(EventAnnotationDeleted, annotation.SessionID, annotation)
+
+	s.mu.Unlock()
+	s.publish(event)
 	return annotation, true
 }
 
 func (s *Store) AddThreadMessage(annotationID, role, content string) (Annotation, bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	annotation, ok := s.annotations[annotationID]
 	if !ok {
+		s.mu.Unlock()
 		return Annotation{}, false
 	}
 
@@ -227,7 +238,10 @@ func (s *Store) AddThreadMessage(annotationID, role, content string) (Annotation
 	annotation.UpdatedAt = nowISO()
 	s.annotations[annotationID] = annotation
 	s.persistAnnotationLocked(annotation)
-	s.emitLocked(EventThreadMessage, annotation.SessionID, annotation)
+	event := s.emitLocked(EventThreadMessage, annotation.SessionID, annotation)
+
+	s.mu.Unlock()
+	s.publish(event)
 	return annotation, true
 }
 
@@ -317,8 +331,10 @@ func (s *Store) GetEventsSince(sessionID string, sequence int64) []Event {
 
 func (s *Store) EmitActionRequested(sessionID string, request ActionRequest) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.emitLocked(EventActionRequested, sessionID, request)
+	event := s.emitLocked(EventActionRequested, sessionID, request)
+	s.mu.Unlock()
+
+	s.publish(event)
 }
 
 func (s *Store) SubscribeAll() (<-chan Event, func()) {
@@ -361,7 +377,7 @@ func (s *Store) SubscribeSession(sessionID string) (<-chan Event, func()) {
 	}
 }
 
-func (s *Store) emitLocked(kind EventType, sessionID string, payload any) {
+func (s *Store) emitLocked(kind EventType, sessionID string, payload any) Event {
 	s.sequence++
 	event := Event{
 		Type:      kind,
@@ -372,7 +388,7 @@ func (s *Store) emitLocked(kind EventType, sessionID string, payload any) {
 	}
 	s.events[sessionID] = append(s.events[sessionID], event)
 	s.persistEventLocked(event)
-	s.publish(event)
+	return event
 }
 
 func (s *Store) publish(event Event) {

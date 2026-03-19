@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestStoreCoreFlows(t *testing.T) {
@@ -156,9 +157,23 @@ func TestStoreSubscriptionsAndHelpers(t *testing.T) {
 
 	full := make(chan Event, 1)
 	full <- Event{Type: EventAnnotationCreated}
-	nonBlockingSend(full, Event{Type: EventAnnotationUpdated})
-	if len(full) != 1 {
-		t.Fatal("nonBlockingSend should not block or add when channel is full")
+	blocked := make(chan struct{})
+	go func() {
+		sendWithBackpressure(full, Event{Type: EventAnnotationUpdated})
+		close(blocked)
+	}()
+
+	select {
+	case <-blocked:
+		t.Fatal("sendWithBackpressure should block while channel is full")
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	<-full
+	select {
+	case <-blocked:
+	case <-time.After(1 * time.Second):
+		t.Fatal("sendWithBackpressure should unblock after capacity is available")
 	}
 
 	if !needsAttention(Annotation{Status: ""}) {
@@ -179,6 +194,86 @@ func TestStoreSubscriptionsAndHelpers(t *testing.T) {
 
 	if id := store.newID(); id == "" {
 		t.Fatal("newID should return non-empty id")
+	}
+}
+
+func TestStoreBackpressurePublishDoesNotHoldStoreMutex(t *testing.T) {
+	t.Setenv("AGENTATION_STORE", "memory")
+	store := NewStore()
+	session := store.CreateSession("http://example.com", "")
+
+	baselineEventCount := len(store.GetEventsSince(session.ID, 0))
+	events, unsubscribe := store.SubscribeSession(session.ID)
+	defer unsubscribe()
+
+	for i := 0; i < cap(events); i++ {
+		_, ok := store.AddAnnotation(session.ID, Annotation{Comment: fmt.Sprintf("fill-%d", i), Element: "button", ElementPath: "body > button"})
+		if !ok {
+			t.Fatal("AddAnnotation should succeed while filling subscriber buffer")
+		}
+	}
+	if len(events) != cap(events) {
+		t.Fatalf("subscriber channel should be full; len=%d cap=%d", len(events), cap(events))
+	}
+
+	publishDone := make(chan struct{})
+	publishErr := make(chan string, 1)
+	go func() {
+		_, ok := store.AddAnnotation(session.ID, Annotation{Comment: "blocked", Element: "button", ElementPath: "body > button"})
+		if !ok {
+			publishErr <- "AddAnnotation should succeed for blocked publish"
+		}
+		close(publishDone)
+	}()
+
+	select {
+	case <-publishDone:
+		t.Fatal("expected publish to block when subscriber channel is full")
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	readDone := make(chan int, 1)
+	go func() {
+		readDone <- len(store.GetEventsSince(session.ID, 0))
+	}()
+
+	select {
+	case count := <-readDone:
+		if want := baselineEventCount + cap(events) + 1; count != want {
+			t.Fatalf("expected blocked event to remain durable before publish unblocks; got %d want %d", count, want)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("GetEventsSince blocked while publish was backpressured")
+	}
+
+	createDone := make(chan struct{})
+	go func() {
+		_ = store.CreateSession("http://example.com/other", "")
+		close(createDone)
+	}()
+
+	select {
+	case <-createDone:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("CreateSession blocked behind backpressured publish")
+	}
+
+	select {
+	case <-events:
+	case <-time.After(1 * time.Second):
+		t.Fatal("expected buffered event to be available for draining")
+	}
+
+	select {
+	case <-publishDone:
+	case <-time.After(1 * time.Second):
+		t.Fatal("blocked publish did not resume after drain")
+	}
+
+	select {
+	case msg := <-publishErr:
+		t.Fatal(msg)
+	default:
 	}
 }
 
