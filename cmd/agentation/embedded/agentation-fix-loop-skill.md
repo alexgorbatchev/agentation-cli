@@ -156,7 +156,7 @@ agentation dismiss <annotation-id> --reason "Not actionable because ..."
 
 ## Required project-scoped loop
 
-Use `<project-id>` as the first argument for all pending/watch commands:
+Use `<project-id>` as the first argument for all pending/watch commands. Use timeout of at least 300s:
 
 ```bash
 agentation projects --json
