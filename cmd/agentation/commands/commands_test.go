@@ -17,16 +17,29 @@ import (
 )
 
 func TestRunProjectsJSON(t *testing.T) {
+	now := time.Now().UTC()
+	recentCreatedAt := now.Add(-23 * time.Hour).Format(time.RFC3339Nano)
+	recentUpdatedAt := now.Add(-2 * time.Hour).Format(time.RFC3339Nano)
+	staleCreatedAt := now.Add(-25 * time.Hour).Format(time.RFC3339Nano)
+
 	testServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.RequestURI() != "/sessions" {
 			t.Fatalf("request URI = %q, want %q", request.URL.RequestURI(), "/sessions")
 		}
-		_, _ = writer.Write([]byte(`[
-			{"id":"s1","projectId":"proj-b"},
-			{"id":"s2","projectId":"proj-a"},
-			{"id":"s3","projectId":"proj-b"},
-			{"id":"s4","projectId":"   "}
-		]`))
+		_, _ = writer.Write([]byte(fmt.Sprintf(`[
+			{"id":"s1","projectId":"proj-b","createdAt":%q},
+			{"id":"s2","projectId":"proj-a","createdAt":%q},
+			{"id":"s3","projectId":"proj-b","createdAt":%q},
+			{"id":"s4","projectId":"proj-c","createdAt":%q,"updatedAt":%q},
+			{"id":"s5","projectId":"   ","createdAt":%q}
+		]`,
+			recentCreatedAt,
+			staleCreatedAt,
+			staleCreatedAt,
+			staleCreatedAt,
+			recentUpdatedAt,
+			recentCreatedAt,
+		)))
 	}))
 	defer testServer.Close()
 
@@ -42,7 +55,7 @@ func TestRunProjectsJSON(t *testing.T) {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
 
-	mustContain(t, stdout.String(), "[\n  \"proj-a\",\n  \"proj-b\"\n]\n")
+	mustContain(t, stdout.String(), "[\n  \"proj-b\",\n  \"proj-c\"\n]\n")
 }
 
 func TestRunProjectJSON(t *testing.T) {

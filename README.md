@@ -29,7 +29,7 @@ Commands:
 - `generate --fix-loop-skill`
 - `pending <project-id> [--base-url <url>] [--json]`
 - `project <project-id> [--base-url <url>] [--json]`
-- `projects [--base-url <url>]`
+- `projects [--base-url <url>]` (project IDs active in the last 24h)
 - `reply <annotation-id> [--base-url <url>] --message "..." [--json]`
 - `resolve <annotation-id> [--base-url <url>] [--summary "..."] [--json]`
 - `start [--server-addr host:port|0] [--router-addr host:port|0] [--foreground|--background]`
@@ -48,7 +48,7 @@ AGENTATION_BASE_URL=http://127.0.0.1:4747 agentation pending project-alpha --jso
 ## Project-scoped filtering
 
 Project scoping is required for `pending` and `watch`.
-Use `projects` to discover available project IDs.
+Use `projects` to discover project IDs with activity in the last 24 hours.
 
 ```bash
 agentation projects --json

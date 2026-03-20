@@ -115,6 +115,11 @@ func (s *Service) withCORS(next http.Handler) http.Handler {
 }
 
 func (s *Service) handleHealth(writer http.ResponseWriter, request *http.Request) {
+	projectID := strings.TrimSpace(request.URL.Query().Get("projectId"))
+	if projectID != "" {
+		s.store.TouchProject(projectID)
+	}
+
 	writeJSON(writer, http.StatusOK, map[string]any{"status": "ok", "mode": "local"})
 }
 
@@ -130,6 +135,10 @@ func (s *Service) handleStatus(writer http.ResponseWriter, request *http.Request
 
 func (s *Service) handleListSessions(writer http.ResponseWriter, request *http.Request) {
 	projectID := strings.TrimSpace(request.URL.Query().Get("projectId"))
+	if projectID != "" {
+		s.store.TouchProject(projectID)
+	}
+
 	sessions := s.store.ListSessions()
 	if projectID != "" {
 		filtered := make([]Session, 0)
@@ -163,6 +172,7 @@ func (s *Service) handleCreateSession(writer http.ResponseWriter, request *http.
 
 func (s *Service) handleGetSession(writer http.ResponseWriter, request *http.Request) {
 	sessionID := request.PathValue("id")
+	s.store.TouchSession(sessionID)
 	session, ok := s.store.GetSessionWithAnnotations(sessionID)
 	if !ok {
 		writeError(writer, http.StatusNotFound, "Session not found")
@@ -262,6 +272,7 @@ func (s *Service) handleAddThreadMessage(writer http.ResponseWriter, request *ht
 
 func (s *Service) handleSessionPending(writer http.ResponseWriter, request *http.Request) {
 	sessionID := request.PathValue("id")
+	s.store.TouchSession(sessionID)
 	_, ok := s.store.GetSession(sessionID)
 	if !ok {
 		writeError(writer, http.StatusNotFound, "Session not found")
@@ -274,6 +285,9 @@ func (s *Service) handleSessionPending(writer http.ResponseWriter, request *http
 
 func (s *Service) handleAllPending(writer http.ResponseWriter, request *http.Request) {
 	projectID := strings.TrimSpace(request.URL.Query().Get("projectId"))
+	if projectID != "" {
+		s.store.TouchProject(projectID)
+	}
 
 	pending := s.store.GetAllAnnotationsNeedingAttention()
 	if projectID != "" {
@@ -324,6 +338,7 @@ func (s *Service) handleRequestAction(writer http.ResponseWriter, request *http.
 
 func (s *Service) handleSessionEvents(writer http.ResponseWriter, request *http.Request) {
 	sessionID := request.PathValue("id")
+	s.store.TouchSession(sessionID)
 	_, ok := s.store.GetSession(sessionID)
 	if !ok {
 		writeError(writer, http.StatusNotFound, "Session not found")
@@ -366,6 +381,9 @@ func (s *Service) handleGlobalEvents(writer http.ResponseWriter, request *http.R
 	isAgent := request.URL.Query().Get("agent") == "true"
 	domain := strings.TrimSpace(request.URL.Query().Get("domain"))
 	projectID := strings.TrimSpace(request.URL.Query().Get("projectId"))
+	if projectID != "" {
+		s.store.TouchProject(projectID)
+	}
 
 	if !startSSE(writer) {
 		writeError(writer, http.StatusInternalServerError, "streaming not supported")

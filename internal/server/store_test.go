@@ -128,6 +128,44 @@ func TestStoreCoreFlows(t *testing.T) {
 	}
 }
 
+func TestStoreTouchesSessionUpdatedAtOnActivity(t *testing.T) {
+	t.Setenv("AGENTATION_STORE", "memory")
+	store := NewStore()
+	session := store.CreateSession("http://example.com/page", "project-1")
+	if session.UpdatedAt != "" {
+		t.Fatalf("session.UpdatedAt = %q, want empty on create", session.UpdatedAt)
+	}
+
+	annotation, ok := store.AddAnnotation(session.ID, Annotation{Comment: "A", Element: "button", ElementPath: "body > button"})
+	if !ok {
+		t.Fatal("AddAnnotation should succeed")
+	}
+
+	updatedSession, ok := store.GetSession(session.ID)
+	if !ok {
+		t.Fatal("GetSession should find created session")
+	}
+	if updatedSession.UpdatedAt == "" {
+		t.Fatal("AddAnnotation should touch session UpdatedAt")
+	}
+
+	firstUpdatedAt := updatedSession.UpdatedAt
+	time.Sleep(time.Millisecond)
+
+	_, ok = store.UpdateAnnotation(annotation.ID, map[string]any{"comment": "B"})
+	if !ok {
+		t.Fatal("UpdateAnnotation should succeed")
+	}
+
+	updatedSession, ok = store.GetSession(session.ID)
+	if !ok {
+		t.Fatal("GetSession should find updated session")
+	}
+	if updatedSession.UpdatedAt == firstUpdatedAt {
+		t.Fatal("UpdateAnnotation should refresh session UpdatedAt")
+	}
+}
+
 func TestStoreSubscriptionsAndHelpers(t *testing.T) {
 	t.Setenv("AGENTATION_STORE", "memory")
 	store := NewStore()

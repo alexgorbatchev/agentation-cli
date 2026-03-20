@@ -205,7 +205,7 @@ func printUsage(writer io.Writer) {
 		{"generate --fix-loop-skill", "", "Print embedded Agentation fix-loop skill"},
 		{"pending <project-id> [--base-url <url>] [--json]", "", "Get pending annotations"},
 		{"project <project-id> [--base-url <url>] [--json]", "", "Get project summary"},
-		{"projects [--base-url <url>]", "", "List project IDs"},
+		{"projects [--base-url <url>]", "", "List project IDs active in the last 24h"},
 		{"reply <annotation-id> [--base-url <url>] --message text [--json]", "", "Add thread reply"},
 		{"resolve <annotation-id> [--base-url <url>] [--summary text] [--json]", "", "Resolve annotation"},
 		{"start", "", "Start local services (single PID)"},

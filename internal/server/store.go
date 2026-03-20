@@ -85,6 +85,48 @@ func (s *Store) CreateSession(url, projectID string) Session {
 	return session
 }
 
+func (s *Store) touchSessionLocked(sessionID string, updatedAt string) {
+	session, ok := s.sessions[sessionID]
+	if !ok {
+		return
+	}
+
+	session.UpdatedAt = updatedAt
+	s.sessions[sessionID] = session
+	s.persistSessionLocked(session)
+}
+
+func (s *Store) touchProjectLocked(projectID string, updatedAt string) {
+	trimmedProjectID := strings.TrimSpace(projectID)
+	if trimmedProjectID == "" {
+		return
+	}
+
+	for sessionID, session := range s.sessions {
+		if session.ProjectID != trimmedProjectID {
+			continue
+		}
+
+		session.UpdatedAt = updatedAt
+		s.sessions[sessionID] = session
+		s.persistSessionLocked(session)
+	}
+}
+
+func (s *Store) TouchSession(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.touchSessionLocked(sessionID, nowISO())
+}
+
+func (s *Store) TouchProject(projectID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.touchProjectLocked(projectID, nowISO())
+}
+
 func (s *Store) ListSessions() []Session {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -146,6 +188,7 @@ func (s *Store) AddAnnotation(sessionID string, annotation Annotation) (Annotati
 
 	s.annotations[annotation.ID] = annotation
 	s.persistAnnotationLocked(annotation)
+	s.touchSessionLocked(sessionID, nowISO())
 	event := s.emitLocked(EventAnnotationCreated, sessionID, annotation)
 
 	s.mu.Unlock()
@@ -194,6 +237,7 @@ func (s *Store) UpdateAnnotation(id string, patch map[string]any) (Annotation, b
 	annotation.UpdatedAt = nowISO()
 	s.annotations[id] = annotation
 	s.persistAnnotationLocked(annotation)
+	s.touchSessionLocked(annotation.SessionID, nowISO())
 	event := s.emitLocked(EventAnnotationUpdated, annotation.SessionID, annotation)
 
 	s.mu.Unlock()
@@ -212,6 +256,7 @@ func (s *Store) DeleteAnnotation(id string) (Annotation, bool) {
 
 	delete(s.annotations, id)
 	s.deleteAnnotationLocked(id)
+	s.touchSessionLocked(annotation.SessionID, nowISO())
 	event := s.emitLocked(EventAnnotationDeleted, annotation.SessionID, annotation)
 
 	s.mu.Unlock()
@@ -238,6 +283,7 @@ func (s *Store) AddThreadMessage(annotationID, role, content string) (Annotation
 	annotation.UpdatedAt = nowISO()
 	s.annotations[annotationID] = annotation
 	s.persistAnnotationLocked(annotation)
+	s.touchSessionLocked(annotation.SessionID, nowISO())
 	event := s.emitLocked(EventThreadMessage, annotation.SessionID, annotation)
 
 	s.mu.Unlock()
@@ -331,6 +377,7 @@ func (s *Store) GetEventsSince(sessionID string, sequence int64) []Event {
 
 func (s *Store) EmitActionRequested(sessionID string, request ActionRequest) {
 	s.mu.Lock()
+	s.touchSessionLocked(sessionID, nowISO())
 	event := s.emitLocked(EventActionRequested, sessionID, request)
 	s.mu.Unlock()
 

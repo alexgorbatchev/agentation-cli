@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/benjitaylor/agentation/cli/internal/api"
 )
@@ -27,6 +28,7 @@ type projectSessionSummary struct {
 }
 
 const projectSessionFetchConcurrency = 8
+const recentProjectActivityWindow = 24 * time.Hour
 
 // ProjectSessionFetchWorkerLimit exposes the concurrency ceiling for session detail fetches.
 const ProjectSessionFetchWorkerLimit = projectSessionFetchConcurrency
@@ -43,6 +45,47 @@ type projectSessionResult struct {
 	index   int
 	summary projectSessionSummary
 	err     error
+}
+
+func recentProjectIDs(sessions []api.Session, now time.Time) []string {
+	cutoff := now.Add(-recentProjectActivityWindow)
+	projectSet := make(map[string]struct{})
+	for _, session := range sessions {
+		projectID := strings.TrimSpace(session.ProjectID)
+		if projectID == "" {
+			continue
+		}
+
+		activityTime, ok := sessionActivityTime(session)
+		if !ok || activityTime.Before(cutoff) {
+			continue
+		}
+
+		projectSet[projectID] = struct{}{}
+	}
+
+	projects := make([]string, 0, len(projectSet))
+	for projectID := range projectSet {
+		projects = append(projects, projectID)
+	}
+	sort.Strings(projects)
+	return projects
+}
+
+func sessionActivityTime(session api.Session) (time.Time, bool) {
+	for _, timestamp := range []string{session.UpdatedAt, session.CreatedAt} {
+		trimmedTimestamp := strings.TrimSpace(timestamp)
+		if trimmedTimestamp == "" {
+			continue
+		}
+
+		activityTime, err := time.Parse(time.RFC3339Nano, trimmedTimestamp)
+		if err == nil {
+			return activityTime, true
+		}
+	}
+
+	return time.Time{}, false
 }
 
 func fetchProjectSessionSummaries(ctx context.Context, client *api.Client, sessions []api.Session) ([]projectSessionSummary, int, error) {
@@ -131,20 +174,7 @@ func RunProjects(ctx context.Context, client *api.Client, args []string, stdout,
 		return err
 	}
 
-	projectSet := make(map[string]struct{})
-	for _, session := range sessions {
-		projectID := strings.TrimSpace(session.ProjectID)
-		if projectID == "" {
-			continue
-		}
-		projectSet[projectID] = struct{}{}
-	}
-
-	projects := make([]string, 0, len(projectSet))
-	for projectID := range projectSet {
-		projects = append(projects, projectID)
-	}
-	sort.Strings(projects)
+	projects := recentProjectIDs(sessions, time.Now().UTC())
 
 	if *asJSON {
 		return writeJSON(stdout, projects)

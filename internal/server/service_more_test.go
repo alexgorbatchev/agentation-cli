@@ -181,6 +181,36 @@ func TestHTTPAPIBranches(t *testing.T) {
 	}
 }
 
+func TestHealthProjectTouchMarksProjectActive(t *testing.T) {
+	t.Setenv("AGENTATION_STORE", "memory")
+	service := NewService("127.0.0.1:0", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ts := httptest.NewServer(service.httpServer.Handler)
+	defer ts.Close()
+
+	session := service.store.CreateSession("http://example.com/alpha", "project-alpha")
+	if session.UpdatedAt != "" {
+		t.Fatalf("session.UpdatedAt = %q, want empty on create", session.UpdatedAt)
+	}
+
+	response, err := http.Get(ts.URL + "/health?projectId=project-alpha")
+	if err != nil {
+		t.Fatalf("health request failed: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		content, _ := io.ReadAll(response.Body)
+		t.Fatalf("health status = %d body=%s", response.StatusCode, string(content))
+	}
+
+	updatedSession, ok := service.store.GetSession(session.ID)
+	if !ok {
+		t.Fatal("expected session to remain available")
+	}
+	if updatedSession.UpdatedAt == "" {
+		t.Fatal("health check with projectId should touch session UpdatedAt")
+	}
+}
+
 func TestProjectScopedPendingAndInitialSync(t *testing.T) {
 	t.Setenv("AGENTATION_STORE", "memory")
 	service := NewService("127.0.0.1:0", slog.New(slog.NewTextHandler(io.Discard, nil)))
