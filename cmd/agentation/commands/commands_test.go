@@ -3,11 +3,15 @@ package commands
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/benjitaylor/agentation/cli/internal/api"
 )
@@ -80,6 +84,136 @@ func TestRunProjectJSON(t *testing.T) {
 	if strings.Index(output, "\"id\": \"s1\"") > strings.Index(output, "\"id\": \"s2\"") {
 		t.Fatalf("expected sessions to be sorted by id, got output:\n%s", output)
 	}
+}
+
+func TestRunProjectConcurrentFetchKeepsSortedSessions(t *testing.T) {
+	sessionCount := 16
+	type session struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+		URL    string `json:"url"`
+	}
+
+	sessions := make([]session, 0, sessionCount)
+	for index := sessionCount; index >= 1; index-- {
+		sessions = append(sessions, session{
+			ID:     fmt.Sprintf("s%02d", index),
+			Status: "active",
+			URL:    fmt.Sprintf("https://example.com/%02d", index),
+		})
+	}
+
+	listPayload, err := json.Marshal(sessions)
+	if err != nil {
+		t.Fatalf("marshaling sessions payload: %v", err)
+	}
+
+	var inFlight int64
+	var maxInFlight int64
+
+	testServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		uri := request.URL.RequestURI()
+		switch {
+		case uri == "/sessions?projectId=proj-1":
+			_, _ = writer.Write(listPayload)
+		case strings.HasPrefix(uri, "/sessions/"):
+			sessionID := strings.TrimPrefix(uri, "/sessions/")
+			current := atomic.AddInt64(&inFlight, 1)
+			for {
+				previousMax := atomic.LoadInt64(&maxInFlight)
+				if current <= previousMax {
+					break
+				}
+				if atomic.CompareAndSwapInt64(&maxInFlight, previousMax, current) {
+					break
+				}
+			}
+
+			time.Sleep(35 * time.Millisecond)
+			atomic.AddInt64(&inFlight, -1)
+
+			_, _ = writer.Write([]byte(fmt.Sprintf(`{"id":"%s","annotations":[{"id":"a-%s"}]}`,
+				sessionID,
+				sessionID,
+			)))
+		default:
+			t.Fatalf("unexpected URI: %s", uri)
+		}
+	}))
+	defer testServer.Close()
+
+	client := api.NewClient(testServer.URL)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	err = RunProject(context.Background(), client, []string{"proj-1", "--json"}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("RunProject returned error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	if atomic.LoadInt64(&maxInFlight) <= 1 {
+		t.Fatalf("expected concurrent session fetches, max in-flight requests = %d", maxInFlight)
+	}
+	if atomic.LoadInt64(&maxInFlight) > int64(projectSessionFetchConcurrency) {
+		t.Fatalf("max in-flight requests = %d, expected <= %d", maxInFlight, projectSessionFetchConcurrency)
+	}
+
+	var summary projectSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("unmarshaling RunProject output: %v", err)
+	}
+
+	if summary.SessionCount != sessionCount {
+		t.Fatalf("sessionCount = %d, want %d", summary.SessionCount, sessionCount)
+	}
+	if summary.AnnotationCount != sessionCount {
+		t.Fatalf("annotationCount = %d, want %d", summary.AnnotationCount, sessionCount)
+	}
+	if len(summary.Sessions) != sessionCount {
+		t.Fatalf("len(summary.Sessions) = %d, want %d", len(summary.Sessions), sessionCount)
+	}
+	for index := 1; index < len(summary.Sessions); index++ {
+		if summary.Sessions[index-1].ID > summary.Sessions[index].ID {
+			t.Fatalf("sessions are not sorted by id: %q before %q", summary.Sessions[index-1].ID, summary.Sessions[index].ID)
+		}
+	}
+}
+
+func TestRunProjectConcurrentFetchReturnsError(t *testing.T) {
+	testServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.RequestURI() {
+		case "/sessions?projectId=proj-1":
+			_, _ = writer.Write([]byte(`[
+				{"id":"s1","status":"active","url":"https://example.com/1"},
+				{"id":"s2","status":"active","url":"https://example.com/2"},
+				{"id":"s3","status":"active","url":"https://example.com/3"}
+			]`))
+		case "/sessions/s1":
+			time.Sleep(25 * time.Millisecond)
+			_, _ = writer.Write([]byte(`{"id":"s1","annotations":[]}`))
+		case "/sessions/s2":
+			http.Error(writer, "boom", http.StatusInternalServerError)
+		case "/sessions/s3":
+			time.Sleep(25 * time.Millisecond)
+			_, _ = writer.Write([]byte(`{"id":"s3","annotations":[]}`))
+		default:
+			t.Fatalf("unexpected URI: %s", request.URL.RequestURI())
+		}
+	}))
+	defer testServer.Close()
+
+	client := api.NewClient(testServer.URL)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	err := RunProject(context.Background(), client, []string{"proj-1", "--json"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("expected RunProject to return an error")
+	}
+	mustContain(t, err.Error(), `getting session "s2"`)
 }
 
 func TestRunPendingText(t *testing.T) {

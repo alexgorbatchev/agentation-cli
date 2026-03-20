@@ -7,6 +7,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/benjitaylor/agentation/cli/internal/api"
 )
@@ -23,6 +24,98 @@ type projectSessionSummary struct {
 	Status          string `json:"status"`
 	URL             string `json:"url"`
 	AnnotationCount int    `json:"annotationCount"`
+}
+
+const projectSessionFetchConcurrency = 8
+
+// ProjectSessionFetchWorkerLimit exposes the concurrency ceiling for session detail fetches.
+const ProjectSessionFetchWorkerLimit = projectSessionFetchConcurrency
+
+// ProjectSummary is the JSON payload returned by the `project --json` command.
+type ProjectSummary = projectSummary
+
+type projectSessionJob struct {
+	index   int
+	session api.Session
+}
+
+type projectSessionResult struct {
+	index   int
+	summary projectSessionSummary
+	err     error
+}
+
+func fetchProjectSessionSummaries(ctx context.Context, client *api.Client, sessions []api.Session) ([]projectSessionSummary, int, error) {
+	if len(sessions) == 0 {
+		return nil, 0, nil
+	}
+
+	workerCount := projectSessionFetchConcurrency
+	if workerCount > len(sessions) {
+		workerCount = len(sessions)
+	}
+
+	jobChannel := make(chan projectSessionJob, len(sessions))
+	for index, session := range sessions {
+		jobChannel <- projectSessionJob{index: index, session: session}
+	}
+	close(jobChannel)
+
+	resultChannel := make(chan projectSessionResult, len(sessions))
+
+	var workerGroup sync.WaitGroup
+	worker := func() {
+		defer workerGroup.Done()
+		for job := range jobChannel {
+			sessionWithAnnotations, err := client.GetSession(ctx, job.session.ID)
+			if err != nil {
+				resultChannel <- projectSessionResult{index: job.index, err: err}
+				continue
+			}
+
+			resultChannel <- projectSessionResult{
+				index: job.index,
+				summary: projectSessionSummary{
+					ID:              job.session.ID,
+					Status:          job.session.Status,
+					URL:             job.session.URL,
+					AnnotationCount: len(sessionWithAnnotations.Annotations),
+				},
+			}
+		}
+	}
+
+	workerGroup.Add(workerCount)
+	for workerIndex := 0; workerIndex < workerCount; workerIndex++ {
+		go worker()
+	}
+
+	go func() {
+		workerGroup.Wait()
+		close(resultChannel)
+	}()
+
+	summaries := make([]projectSessionSummary, len(sessions))
+	totalAnnotations := 0
+	errorsByIndex := make(map[int]error)
+
+	for result := range resultChannel {
+		if result.err != nil {
+			errorsByIndex[result.index] = result.err
+			continue
+		}
+
+		summaries[result.index] = result.summary
+		totalAnnotations += result.summary.AnnotationCount
+	}
+
+	for index := range sessions {
+		if err, ok := errorsByIndex[index]; ok {
+			return nil, 0, err
+		}
+	}
+
+	return summaries, totalAnnotations, nil
 }
 
 func RunProjects(ctx context.Context, client *api.Client, args []string, stdout, stderr io.Writer) error {
@@ -90,24 +183,15 @@ func RunProject(ctx context.Context, client *api.Client, args []string, stdout, 
 		return err
 	}
 
-	summary := projectSummary{
-		ProjectID: projectID,
-		Sessions:  make([]projectSessionSummary, 0, len(sessions)),
+	projectSessions, totalAnnotations, err := fetchProjectSessionSummaries(ctx, client, sessions)
+	if err != nil {
+		return err
 	}
 
-	for _, session := range sessions {
-		sessionWithAnnotations, err := client.GetSession(ctx, session.ID)
-		if err != nil {
-			return err
-		}
-		annotationCount := len(sessionWithAnnotations.Annotations)
-		summary.AnnotationCount += annotationCount
-		summary.Sessions = append(summary.Sessions, projectSessionSummary{
-			ID:              session.ID,
-			Status:          session.Status,
-			URL:             session.URL,
-			AnnotationCount: annotationCount,
-		})
+	summary := projectSummary{
+		ProjectID:       projectID,
+		AnnotationCount: totalAnnotations,
+		Sessions:        projectSessions,
 	}
 
 	sort.Slice(summary.Sessions, func(i, j int) bool {
