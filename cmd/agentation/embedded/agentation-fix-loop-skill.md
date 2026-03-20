@@ -14,6 +14,8 @@ targets:
 
 Watch for annotations from the Agentation toolbar and fix each one in the codebase using the `agentation` CLI.
 
+If this skill is invoked as `/skill:agentation-fix-loop <project-id>`, treat the user-supplied argument as the authoritative project ID for this run and skip repo discovery.
+
 ## CLI commands used by this skill
 
 - `agentation start` / `agentation stop` / `agentation status`
@@ -70,7 +72,9 @@ AGENTATION_ROUTER_ADDR=0 agentation start --background
 
 ### 3) Determine the project ID and fetch pending work
 
-Quickly extract project IDs from your app code:
+If the skill was invoked with a user argument (for example `/skill:agentation-fix-loop project-alpha`), use that `<project-id>` directly and skip discovery.
+
+Otherwise, quickly extract project IDs from your app code:
 
 ```bash
 rg -n --glob '*.{tsx,ts,jsx,js}' '<Agentation[^>]*projectId='
