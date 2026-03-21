@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/benjitaylor/agentation/cli/internal/api"
+	"github.com/alexgorbatchev/agentation-cli/internal/api"
 )
 
 func TestRunProjectFetchesSessionDetailsConcurrentlyWithWorkerLimit(t *testing.T) {

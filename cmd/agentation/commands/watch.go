@@ -7,7 +7,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/benjitaylor/agentation/cli/internal/api"
+	"github.com/alexgorbatchev/agentation-cli/internal/api"
 )
 
 func RunWatch(ctx context.Context, client *api.Client, args []string, stdout, stderr io.Writer) error {

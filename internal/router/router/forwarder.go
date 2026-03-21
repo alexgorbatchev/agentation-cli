@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/benjitaylor/agentation/cli/internal/router/model"
+	"github.com/alexgorbatchev/agentation-cli/internal/router/model"
 )
 
 type Forwarder struct {

@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/benjitaylor/agentation/cli/internal/procctl"
-	"github.com/benjitaylor/agentation/cli/internal/server"
+	"github.com/alexgorbatchev/agentation-cli/internal/procctl"
+	"github.com/alexgorbatchev/agentation-cli/internal/server"
 )
 
 const shutdownTimeout = 5 * time.Second

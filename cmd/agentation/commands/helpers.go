@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/benjitaylor/agentation/cli/internal/api"
+	"github.com/alexgorbatchev/agentation-cli/internal/api"
 )
 
 func parseRequiredLeadingArg(args []string, usage string) (string, []string, error) {

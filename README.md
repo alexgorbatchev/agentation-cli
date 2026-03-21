@@ -5,15 +5,19 @@ Go-based CLI companion for the Agentation HTTP server.
 ## Build
 
 ```bash
-cd cli
 go build ./cmd/agentation
 ```
 
-Or with just from this directory:
+Or with `just` from this directory:
 
 ```bash
-cd cli
 just build
+```
+
+## Install with Go
+
+```bash
+go install github.com/alexgorbatchev/agentation-cli/cmd/agentation@latest
 ```
 
 ## Usage

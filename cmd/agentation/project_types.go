@@ -1,6 +1,6 @@
 package main
 
-import "github.com/benjitaylor/agentation/cli/cmd/agentation/commands"
+import "github.com/alexgorbatchev/agentation-cli/cmd/agentation/commands"
 
 const projectSessionFetchWorkerLimit = commands.ProjectSessionFetchWorkerLimit
 

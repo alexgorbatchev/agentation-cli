@@ -130,7 +130,7 @@ func TestEmbeddedFixLoopSkillMatchesSourceSkill(t *testing.T) {
 		t.Fatal("runtime.Caller returned ok=false")
 	}
 
-	sourcePath := filepath.Join(filepath.Dir(currentFile), "..", "..", "..", "skills", "agentation-fix-loop", "SKILL.md")
+	sourcePath := filepath.Join(filepath.Dir(currentFile), "embedded", "agentation-fix-loop-skill.md")
 	sourceContent, err := os.ReadFile(sourcePath)
 	if err != nil {
 		t.Fatalf("reading %s: %v", sourcePath, err)

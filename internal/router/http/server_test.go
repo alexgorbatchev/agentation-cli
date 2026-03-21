@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/benjitaylor/agentation/cli/internal/router/config"
-	"github.com/benjitaylor/agentation/cli/internal/router/model"
-	routerpkg "github.com/benjitaylor/agentation/cli/internal/router/router"
-	"github.com/benjitaylor/agentation/cli/internal/router/store"
+	"github.com/alexgorbatchev/agentation-cli/internal/router/config"
+	"github.com/alexgorbatchev/agentation-cli/internal/router/model"
+	routerpkg "github.com/alexgorbatchev/agentation-cli/internal/router/router"
+	"github.com/alexgorbatchev/agentation-cli/internal/router/store"
 )
 
 func TestRegisterAndListSessions(t *testing.T) {

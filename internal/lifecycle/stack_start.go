@@ -15,11 +15,11 @@ import (
 	"syscall"
 	"time"
 
-	routerconfig "github.com/benjitaylor/agentation/cli/internal/router/config"
-	routerhttp "github.com/benjitaylor/agentation/cli/internal/router/http"
-	routerpkg "github.com/benjitaylor/agentation/cli/internal/router/router"
-	routerstore "github.com/benjitaylor/agentation/cli/internal/router/store"
-	"github.com/benjitaylor/agentation/cli/internal/server"
+	routerconfig "github.com/alexgorbatchev/agentation-cli/internal/router/config"
+	routerhttp "github.com/alexgorbatchev/agentation-cli/internal/router/http"
+	routerpkg "github.com/alexgorbatchev/agentation-cli/internal/router/router"
+	routerstore "github.com/alexgorbatchev/agentation-cli/internal/router/store"
+	"github.com/alexgorbatchev/agentation-cli/internal/server"
 )
 
 func runStartCommand(args []string, stdout, stderr io.Writer) int {

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/benjitaylor/agentation/cli/internal/router/model"
+	"github.com/alexgorbatchev/agentation-cli/internal/router/model"
 )
 
 var (

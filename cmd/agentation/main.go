@@ -9,9 +9,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/benjitaylor/agentation/cli/cmd/agentation/commands"
-	"github.com/benjitaylor/agentation/cli/internal/api"
-	"github.com/benjitaylor/agentation/cli/internal/lifecycle"
+	"github.com/alexgorbatchev/agentation-cli/cmd/agentation/commands"
+	"github.com/alexgorbatchev/agentation-cli/internal/api"
+	"github.com/alexgorbatchev/agentation-cli/internal/lifecycle"
 )
 
 //go:embed embedded/agentation-fix-loop-skill.md

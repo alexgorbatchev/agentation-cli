@@ -13,11 +13,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/benjitaylor/agentation/cli/internal/procctl"
-	"github.com/benjitaylor/agentation/cli/internal/router/config"
-	httpserver "github.com/benjitaylor/agentation/cli/internal/router/http"
-	routerpkg "github.com/benjitaylor/agentation/cli/internal/router/router"
-	"github.com/benjitaylor/agentation/cli/internal/router/store"
+	"github.com/alexgorbatchev/agentation-cli/internal/procctl"
+	"github.com/alexgorbatchev/agentation-cli/internal/router/config"
+	httpserver "github.com/alexgorbatchev/agentation-cli/internal/router/http"
+	routerpkg "github.com/alexgorbatchev/agentation-cli/internal/router/router"
+	"github.com/alexgorbatchev/agentation-cli/internal/router/store"
 )
 
 const shutdownTimeout = 5 * time.Second

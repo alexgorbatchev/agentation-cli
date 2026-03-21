@@ -1,4 +1,4 @@
-module github.com/benjitaylor/agentation/cli
+module github.com/alexgorbatchev/agentation-cli
 
 go 1.26.1
 

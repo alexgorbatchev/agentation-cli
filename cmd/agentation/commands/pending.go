@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/benjitaylor/agentation/cli/internal/api"
+	"github.com/alexgorbatchev/agentation-cli/internal/api"
 )
 
 func RunPending(ctx context.Context, client *api.Client, args []string, stdout, stderr io.Writer) error {

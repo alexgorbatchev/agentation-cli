@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/benjitaylor/agentation/cli/internal/router/model"
+	"github.com/alexgorbatchev/agentation-cli/internal/router/model"
 )
 
 func TestForwardPing(t *testing.T) {
