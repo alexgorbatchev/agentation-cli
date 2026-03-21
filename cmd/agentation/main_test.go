@@ -76,6 +76,54 @@ func TestPrintUsageIncludesGenerateCommand(t *testing.T) {
 	mustContain(t, output.String(), "generate --fix-loop-skill")
 }
 
+func TestRunVersion(t *testing.T) {
+	previousVersion := version
+	version = "1.2.3"
+	t.Cleanup(func() {
+		version = previousVersion
+	})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := run([]string{"version"}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("run(version) exitCode = %d, want 0", exitCode)
+	}
+
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	if stdout.String() != "agentation version 1.2.3\n" {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), "agentation version 1.2.3\n")
+	}
+}
+
+func TestRunVersionFlag(t *testing.T) {
+	previousVersion := version
+	version = "9.9.9"
+	t.Cleanup(func() {
+		version = previousVersion
+	})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := run([]string{"--version"}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("run(--version) exitCode = %d, want 0", exitCode)
+	}
+
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	if stdout.String() != "agentation version 9.9.9\n" {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), "agentation version 9.9.9\n")
+	}
+}
+
 func TestEmbeddedFixLoopSkillMatchesSourceSkill(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -204,12 +252,20 @@ func TestRunAckRejectsBaseURLBeforeAnnotationID(t *testing.T) {
 }
 
 func TestPrintUsageIncludesProjectsCommand(t *testing.T) {
+	previousVersion := version
+	version = "2.0.0"
+	t.Cleanup(func() {
+		version = previousVersion
+	})
+
 	var output bytes.Buffer
 
 	printUsage(&output)
+	mustContain(t, output.String(), "agentation - CLI companion for Agentation HTTP server (version 2.0.0)")
 	mustContain(t, output.String(), "projects [--base-url <url>]")
 	mustContain(t, output.String(), "project <project-id> [--base-url <url>] [--json]")
 	mustContain(t, output.String(), "pending <project-id> [--base-url <url>] [--json]")
+	mustContain(t, output.String(), "version")
 	mustContain(t, output.String(), "watch <project-id> [--base-url <url>] [--batch-window 10]")
 	mustContain(t, output.String(), "[--timeout 300] [--json]")
 }

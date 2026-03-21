@@ -17,6 +17,8 @@ import (
 //go:embed embedded/agentation-fix-loop-skill.md
 var fixLoopSkillContent string
 
+var version = "dev"
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -58,6 +60,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return lifecycle.RunStatus(commandArgs, stdout, stderr)
 	case "__serve-stack":
 		return lifecycle.RunServe(commandArgs, stdout, stderr)
+	case "version", "--version", "-v":
+		printVersion(stdout)
+		return 0
 	case "help", "--help", "-h":
 		printUsage(stdout)
 		return 0
@@ -191,8 +196,12 @@ func runGenerate(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func printVersion(writer io.Writer) {
+	fmt.Fprintf(writer, "agentation version %s\n", version)
+}
+
 func printUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "agentation - CLI companion for Agentation HTTP server")
+	fmt.Fprintf(writer, "agentation - CLI companion for Agentation HTTP server (version %s)\n", version)
 	fmt.Fprintln(writer)
 	fmt.Fprintln(writer, "Commands:")
 	commands := []struct {
@@ -211,6 +220,7 @@ func printUsage(writer io.Writer) {
 		{"start", "", "Start local services (single PID)"},
 		{"status", "", "Show local service status"},
 		{"stop", "", "Stop local services (single PID)"},
+		{"version", "", "Print CLI version"},
 		{"watch <project-id> [--base-url <url>] [--batch-window 10]", "[--timeout 300] [--json]", "Wait for new annotations/thread replies"},
 	}
 
