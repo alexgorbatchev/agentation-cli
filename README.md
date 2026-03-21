@@ -2,6 +2,12 @@
 
 Go-based CLI companion for the Agentation HTTP server.
 
+## Related repositories
+
+- [Agentation Fork](https://github.com/alexgorbatchev/agentation)
+- [Agentation Skills](https://github.com/alexgorbatchev/agentation-skills)
+- [pi-agentation](https://github.com/alexgorbatchev/pi-agentation)
+
 ## Build
 
 ```bash
