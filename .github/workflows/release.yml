@@ -46,18 +46,14 @@ jobs:
         run: node ./scripts/stageNpmPackages.js
 
       - name: Publish platform packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           for package_dir in npm/darwin-x64 npm/darwin-arm64 npm/linux-x64 npm/linux-arm64; do
             (
               cd "$package_dir"
-              npm publish --access public --provenance
+              npm publish --access public
             )
           done
 
       - name: Publish wrapper package
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public --provenance
+        run: npm publish --access public
