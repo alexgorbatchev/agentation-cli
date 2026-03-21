@@ -30,7 +30,7 @@ The wrapper package uses `optionalDependencies` so npm only installs the matchin
 You can point fallback downloads at a mirror by setting:
 
 ```bash
-AGENTATION_CLI_BINARY_HOST=https://github.example.com/alexgorbatchev/agentation-cli/releases/download/v1.0.0 npm install -g @alexgorbatchev/agentation-cli
+AGENTATION_CLI_BINARY_HOST=https://github.example.com/alexgorbatchev/agentation-cli/releases/download/v<version> npm install -g @alexgorbatchev/agentation-cli
 ```
 
 ### Install with Go
