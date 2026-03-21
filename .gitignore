@@ -4,3 +4,4 @@ downloaded/
 dist/
 *.tgz
 npm/*/bin/
+/.cache
