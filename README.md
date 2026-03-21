@@ -1,4 +1,4 @@
-# Agentation CLI
+# Agentation Fork CLI
 
 CLI companion for the Agentation Fork.
 
