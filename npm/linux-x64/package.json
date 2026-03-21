@@ -1,0 +1,19 @@
+{
+  "name": "@alexgorbatchev/agentation-cli-linux-x64",
+  "version": "1.0.0",
+  "description": "Linux x64 distribution of the Agentation CLI binary.",
+  "license": "MIT",
+  "repository": "https://github.com/alexgorbatchev/agentation-cli",
+  "files": [
+    "bin/agentation"
+  ],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

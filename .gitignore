@@ -1,0 +1,6 @@
+node_modules/
+downloaded/
+.agentation-cli-tmp/
+dist/
+*.tgz
+npm/*/bin/

@@ -1,6 +1,6 @@
-# agentation
+# Agentation CLI
 
-Go-based CLI companion for the Agentation HTTP server.
+CLI companion for the Agentation Fork.
 
 ## Related repositories
 
@@ -8,7 +8,38 @@ Go-based CLI companion for the Agentation HTTP server.
 - [Agentation Skills](https://github.com/alexgorbatchev/agentation-skills)
 - [pi-agentation](https://github.com/alexgorbatchev/pi-agentation)
 
-## Build
+## Install
+
+### Install with npm
+
+```bash
+npm install -g @alexgorbatchev/agentation-cli
+```
+
+This repository now ships the CLI as:
+
+- one wrapper package: `@alexgorbatchev/agentation-cli`
+- four platform packages:
+  - `@alexgorbatchev/agentation-cli-darwin-x64`
+  - `@alexgorbatchev/agentation-cli-darwin-arm64`
+  - `@alexgorbatchev/agentation-cli-linux-x64`
+  - `@alexgorbatchev/agentation-cli-linux-arm64`
+
+The wrapper package uses `optionalDependencies` so npm only installs the matching platform package for the current machine. If optional dependencies are disabled during install, the wrapper falls back to downloading the matching GitHub release archive for the same version and verifies it against the published `checksums.txt` file.
+
+You can point fallback downloads at a mirror by setting:
+
+```bash
+AGENTATION_CLI_BINARY_HOST=https://github.example.com/alexgorbatchev/agentation-cli/releases/download/v1.0.0 npm install -g @alexgorbatchev/agentation-cli
+```
+
+### Install with Go
+
+```bash
+go install github.com/alexgorbatchev/agentation-cli/cmd/agentation@latest
+```
+
+## Build from source
 
 ```bash
 go build ./cmd/agentation
@@ -18,12 +49,6 @@ Or with `just` from this directory:
 
 ```bash
 just build
-```
-
-## Install with Go
-
-```bash
-go install github.com/alexgorbatchev/agentation-cli/cmd/agentation@latest
 ```
 
 ## Usage
@@ -39,7 +64,7 @@ Commands:
 - `generate --fix-loop-skill`
 - `pending <project-id> [--base-url <url>] [--json]`
 - `project <project-id> [--base-url <url>] [--json]`
-- `projects [--base-url <url>]` (project IDs active in the last 24h)
+- `projects [--base-url <url>]` (project IDs active in the last 24 hours)
 - `reply <annotation-id> [--base-url <url>] --message "..." [--json]`
 - `resolve <annotation-id> [--base-url <url>] [--summary "..."] [--json]`
 - `start [--server-addr host:port|0] [--router-addr host:port|0] [--foreground|--background]`
@@ -148,6 +173,18 @@ Notes:
 - `AGENTATION_ROUTER_SESSION_STALE_AFTER`
 - `AGENTATION_ROUTER_ALLOW_ABSOLUTE_PATHS`
 - `AGENTATION_ROUTER_ENFORCE_ROOT_BOUNDS`
+- `AGENTATION_CLI_BINARY_HOST` (optional mirror for npm fallback downloads)
+- `AGENTATION_CLI_SKIP_DOWNLOAD=1` (skip npm fallback download step)
+
+## npm release workflow
+
+The npm distribution flow is:
+
+1. `node ./scripts/setPackageVersions.js <version>` syncs the wrapper and platform package versions
+2. `goreleaser` builds GitHub release archives into `dist/`
+3. `node ./scripts/stageNpmPackages.js` extracts the matching binary into each `npm/*` package
+4. publish platform packages first
+5. publish the wrapper package last
 
 ## SQLite storage location
 

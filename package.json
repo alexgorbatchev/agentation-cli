@@ -1,0 +1,54 @@
+{
+  "name": "@alexgorbatchev/agentation-cli",
+  "version": "1.0.0",
+  "description": "Agentation CLI with npm-native platform binaries",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alexgorbatchev/agentation-cli.git"
+  },
+  "homepage": "https://github.com/alexgorbatchev/agentation-cli#readme",
+  "bugs": {
+    "url": "https://github.com/alexgorbatchev/agentation-cli/issues"
+  },
+  "bin": {
+    "agentation": "./bin/agentation.js"
+  },
+  "files": [
+    "bin/agentation.js",
+    "lib",
+    "scripts/install.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "postinstall": "node ./scripts/install.js",
+    "set:version": "node ./scripts/setPackageVersions.js",
+    "stage:npm-packages": "node ./scripts/stageNpmPackages.js",
+    "pack:wrapper": "npm pack",
+    "pack:platforms": "npm pack ./npm/darwin-x64 && npm pack ./npm/darwin-arm64 && npm pack ./npm/linux-x64 && npm pack ./npm/linux-arm64"
+  },
+  "dependencies": {
+    "tar": "^7.4.3"
+  },
+  "optionalDependencies": {
+    "@alexgorbatchev/agentation-cli-darwin-x64": "1.0.0",
+    "@alexgorbatchev/agentation-cli-darwin-arm64": "1.0.0",
+    "@alexgorbatchev/agentation-cli-linux-x64": "1.0.0",
+    "@alexgorbatchev/agentation-cli-linux-arm64": "1.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

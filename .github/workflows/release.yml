@@ -1,4 +1,4 @@
-name: Release Binaries
+name: Release Binaries and npm Packages
 
 on:
   push:
@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   release:
@@ -20,6 +21,11 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
       - name: Install zig
         run: brew install zig
 
@@ -29,3 +35,29 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sync npm package versions from the release tag
+        run: node ./scripts/setPackageVersions.js "${GITHUB_REF_NAME#v}"
+
+      - name: Install npm packaging dependencies
+        run: npm install --ignore-scripts
+
+      - name: Stage platform packages from release archives
+        run: node ./scripts/stageNpmPackages.js
+
+      - name: Publish platform packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          for package_dir in npm/darwin-x64 npm/darwin-arm64 npm/linux-x64 npm/linux-arm64; do
+            (
+              cd "$package_dir"
+              npm publish --access public --provenance
+            )
+          done
+
+      - name: Publish wrapper package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance
