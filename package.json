@@ -1,6 +1,6 @@
 {
   "name": "@alexgorbatchev/agentation-cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Agentation CLI with npm-native platform binaries",
   "license": "MIT",
   "repository": {
@@ -43,10 +43,10 @@
     "tar": "^7.4.3"
   },
   "optionalDependencies": {
-    "@alexgorbatchev/agentation-cli-darwin-x64": "1.0.0",
-    "@alexgorbatchev/agentation-cli-darwin-arm64": "1.0.0",
-    "@alexgorbatchev/agentation-cli-linux-x64": "1.0.0",
-    "@alexgorbatchev/agentation-cli-linux-arm64": "1.0.0"
+    "@alexgorbatchev/agentation-cli-darwin-x64": "1.0.1",
+    "@alexgorbatchev/agentation-cli-darwin-arm64": "1.0.1",
+    "@alexgorbatchev/agentation-cli-linux-x64": "1.0.1",
+    "@alexgorbatchev/agentation-cli-linux-arm64": "1.0.1"
   },
   "publishConfig": {
     "access": "public"

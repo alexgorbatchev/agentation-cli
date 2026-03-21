@@ -1,6 +1,6 @@
 {
   "name": "@alexgorbatchev/agentation-cli-linux-arm64",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Linux arm64 distribution of the Agentation CLI binary.",
   "license": "MIT",
   "repository": "https://github.com/alexgorbatchev/agentation-cli",
