@@ -28,22 +28,50 @@ func writeJSON(writer io.Writer, value any) error {
 	return encoder.Encode(value)
 }
 
-func printPendingAnnotations(writer io.Writer, annotations []api.Annotation) {
-	for idx, ann := range annotations {
-		fmt.Fprintf(writer, "[%d] %s\n", idx+1, ann.ID)
-		fmt.Fprintf(writer, "    %s\n", ann.Comment)
-		if ann.Element != "" {
-			fmt.Fprintf(writer, "    Element: %s\n", ann.Element)
-		}
+func writef(writer io.Writer, format string, args ...any) error {
+	if _, err := fmt.Fprintf(writer, format, args...); err != nil {
+		return fmt.Errorf("writing output: %w", err)
 	}
+	return nil
 }
 
-func printWatchAnnotations(writer io.Writer, annotations []api.Annotation) {
+func writeln(writer io.Writer, args ...any) error {
+	if _, err := fmt.Fprintln(writer, args...); err != nil {
+		return fmt.Errorf("writing output: %w", err)
+	}
+	return nil
+}
+
+func printPendingAnnotations(writer io.Writer, annotations []api.Annotation) error {
 	for idx, ann := range annotations {
-		fmt.Fprintf(writer, "[%d] %s\n", idx+1, ann.ID)
-		fmt.Fprintf(writer, "    %s\n", ann.Comment)
-		if ann.SessionID != "" {
-			fmt.Fprintf(writer, "    Session: %s\n", ann.SessionID)
+		if err := writef(writer, "[%d] %s\n", idx+1, ann.ID); err != nil {
+			return err
+		}
+		if err := writef(writer, "    %s\n", ann.Comment); err != nil {
+			return err
+		}
+		if ann.Element != "" {
+			if err := writef(writer, "    Element: %s\n", ann.Element); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
+}
+
+func printWatchAnnotations(writer io.Writer, annotations []api.Annotation) error {
+	for idx, ann := range annotations {
+		if err := writef(writer, "[%d] %s\n", idx+1, ann.ID); err != nil {
+			return err
+		}
+		if err := writef(writer, "    %s\n", ann.Comment); err != nil {
+			return err
+		}
+		if ann.SessionID != "" {
+			if err := writef(writer, "    Session: %s\n", ann.SessionID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

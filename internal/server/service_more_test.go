@@ -40,7 +40,7 @@ func TestHTTPAPIBranches(t *testing.T) {
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
-		defer resp.Body.Close()
+		defer closeTestCloser(t, resp.Body, "response body")
 		content, _ := io.ReadAll(resp.Body)
 		return resp, string(content)
 	}
@@ -196,7 +196,7 @@ func TestHealthProjectTouchMarksProjectActive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("health request failed: %v", err)
 	}
-	defer response.Body.Close()
+	defer closeTestCloser(t, response.Body, "response body")
 	if response.StatusCode != http.StatusOK {
 		content, _ := io.ReadAll(response.Body)
 		t.Fatalf("health status = %d body=%s", response.StatusCode, string(content))
@@ -226,7 +226,7 @@ func TestProjectScopedPendingAndInitialSync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pending request failed: %v", err)
 	}
-	defer response.Body.Close()
+	defer closeTestCloser(t, response.Body, "response body")
 	if response.StatusCode != http.StatusOK {
 		content, _ := io.ReadAll(response.Body)
 		t.Fatalf("pending status = %d body=%s", response.StatusCode, string(content))
@@ -247,7 +247,7 @@ func TestProjectScopedPendingAndInitialSync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sessions request failed: %v", err)
 	}
-	defer sessionsResponse.Body.Close()
+	defer closeTestCloser(t, sessionsResponse.Body, "sessions response body")
 	if sessionsResponse.StatusCode != http.StatusOK {
 		content, _ := io.ReadAll(sessionsResponse.Body)
 		t.Fatalf("sessions status = %d body=%s", sessionsResponse.StatusCode, string(content))

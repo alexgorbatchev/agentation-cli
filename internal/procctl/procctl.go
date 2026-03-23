@@ -57,7 +57,7 @@ func (c Controller) StartBackgroundCommand(executablePath string, commandArgs []
 	if err != nil {
 		return 0, fmt.Errorf("open log file: %w", err)
 	}
-	defer logFile.Close()
+	defer closeLogFile(logFile)
 
 	command := exec.Command(executablePath, commandArgs...)
 	command.Stdout = logFile
@@ -217,6 +217,10 @@ func isZombieProcess(pid int) bool {
 	}
 
 	return strings.HasPrefix(state, "Z") || strings.Contains(state, " Z")
+}
+
+func closeLogFile(file *os.File) {
+	_ = file.Close() // best-effort cleanup after the child process inherits the file descriptor
 }
 
 func (c Controller) findRunningPIDByScan() (int, bool) {

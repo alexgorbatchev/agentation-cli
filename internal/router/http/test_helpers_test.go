@@ -1,0 +1,13 @@
+package http
+
+import (
+	"io"
+	"testing"
+)
+
+func closeTestCloser(t *testing.T, closer io.Closer, name string) {
+	t.Helper()
+	if err := closer.Close(); err != nil {
+		t.Errorf("close %s: %v", name, err)
+	}
+}

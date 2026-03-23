@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -37,7 +38,7 @@ func (f *Forwarder) ForwardPing(ctx context.Context, session model.Session) erro
 	if error != nil {
 		return fmt.Errorf("sending ping request: %w", error)
 	}
-	defer response.Body.Close()
+	defer closeResponseBody(response.Body)
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fmt.Errorf("ping request failed with status %d", response.StatusCode)
@@ -65,7 +66,7 @@ func (f *Forwarder) ForwardOpen(ctx context.Context, session model.Session, open
 	if error != nil {
 		return fmt.Errorf("sending open request: %w", error)
 	}
-	defer response.Body.Close()
+	defer closeResponseBody(response.Body)
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fmt.Errorf("open request failed with status %d", response.StatusCode)
@@ -99,4 +100,8 @@ func buildTargetURL(endpoint string, routePath string, query url.Values) (string
 	}
 
 	return resolvedURL.String(), nil
+}
+
+func closeResponseBody(body io.ReadCloser) {
+	_ = body.Close() // best-effort cleanup after the response body has been fully handled
 }

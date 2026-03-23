@@ -104,7 +104,7 @@ func callJSON(t *testing.T, method, endpoint string, body any, target any, expec
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer response.Body.Close()
+	defer closeTestCloser(t, response.Body, "response body")
 
 	if response.StatusCode != expectedStatus {
 		content, _ := io.ReadAll(response.Body)

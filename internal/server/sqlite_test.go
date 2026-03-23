@@ -17,7 +17,14 @@ func TestSQLiteBackendRoundTrip(t *testing.T) {
 	if backend == nil {
 		t.Fatal("expected sqlite backend")
 	}
-	defer backend.Close()
+	t.Cleanup(func() {
+		if backend == nil {
+			return
+		}
+		if err := backend.Close(); err != nil {
+			t.Errorf("backend.Close() cleanup error: %v", err)
+		}
+	})
 
 	session := Session{
 		ID:        "s1",
@@ -77,6 +84,7 @@ func TestSQLiteBackendRoundTrip(t *testing.T) {
 	if err := backend.Close(); err != nil {
 		t.Fatalf("Close error: %v", err)
 	}
+	backend = nil
 }
 
 func TestSQLiteModesAndPaths(t *testing.T) {
@@ -147,7 +155,11 @@ func TestSQLiteLoadSnapshotErrors(t *testing.T) {
 		t.Fatalf("newPersistenceBackend error: %v", err)
 	}
 	backend := backendAny.(*sqliteBackend)
-	defer backend.Close()
+	t.Cleanup(func() {
+		if err := backend.Close(); err != nil {
+			t.Errorf("backend.Close() cleanup error: %v", err)
+		}
+	})
 
 	_, err = backend.db.Exec(`INSERT INTO sessions (id, url, status, created_at) VALUES ('s1', 'http://example.com', 'active', ?)`, nowISO())
 	if err != nil {

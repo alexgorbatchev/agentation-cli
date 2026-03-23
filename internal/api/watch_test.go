@@ -2,7 +2,7 @@ package api
 
 import (
 	"context"
-	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -15,7 +15,7 @@ func TestWatchReturnsPendingImmediately(t *testing.T) {
 			t.Fatalf("unexpected path: %s", request.URL.Path)
 		}
 		writer.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(writer, `{"count":1,"annotations":[{"id":"a1","sessionId":"s1","comment":"Fix button","element":"button","elementPath":"body > button"}]}`)
+		mustWriteString(t, writer, `{"count":1,"annotations":[{"id":"a1","sessionId":"s1","comment":"Fix button","element":"button","elementPath":"body > button"}]}`)
 	}))
 	defer server.Close()
 
@@ -36,12 +36,19 @@ func TestWatchReturnsPendingImmediately(t *testing.T) {
 	}
 }
 
+func mustWriteString(t *testing.T, writer io.Writer, value string) {
+	t.Helper()
+	if _, err := io.WriteString(writer, value); err != nil {
+		t.Fatalf("writing test response: %v", err)
+	}
+}
+
 func TestWatchCollectsSSEAnnotations(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/pending":
 			writer.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(writer, `{"count":0,"annotations":[]}`)
+			mustWriteString(t, writer, `{"count":0,"annotations":[]}`)
 			return
 		case "/events":
 			writer.Header().Set("Content-Type", "text/event-stream")
@@ -52,16 +59,16 @@ func TestWatchCollectsSSEAnnotations(t *testing.T) {
 				t.Fatal("response writer does not support flushing")
 			}
 
-			fmt.Fprint(writer, ": connected\n\n")
-			fmt.Fprint(writer, `data: {"type":"annotation.created","sessionId":"s1","sequence":0,"payload":{"id":"a0","sessionId":"s1","comment":"Existing annotation","element":"p","elementPath":"body > p"}}`+"\n\n")
+			mustWriteString(t, writer, ": connected\n\n")
+			mustWriteString(t, writer, `data: {"type":"annotation.created","sessionId":"s1","sequence":0,"payload":{"id":"a0","sessionId":"s1","comment":"Existing annotation","element":"p","elementPath":"body > p"}}`+"\n\n")
 			flusher.Flush()
 
 			time.Sleep(20 * time.Millisecond)
-			fmt.Fprint(writer, `data: {"type":"annotation.created","sessionId":"s1","sequence":1,"payload":{"id":"a1","sessionId":"s1","comment":"Fix spacing","element":"button","elementPath":"body > button"}}`+"\n\n")
+			mustWriteString(t, writer, `data: {"type":"annotation.created","sessionId":"s1","sequence":1,"payload":{"id":"a1","sessionId":"s1","comment":"Fix spacing","element":"button","elementPath":"body > button"}}`+"\n\n")
 			flusher.Flush()
 
 			time.Sleep(20 * time.Millisecond)
-			fmt.Fprint(writer, `data: {"type":"thread.message","sessionId":"s2","sequence":2,"payload":{"id":"a2","sessionId":"s2","comment":"Need follow-up","element":"div","elementPath":"body > div","thread":[{"id":"m1","role":"human","content":"Please also change color","timestamp":1}]}}`+"\n\n")
+			mustWriteString(t, writer, `data: {"type":"thread.message","sessionId":"s2","sequence":2,"payload":{"id":"a2","sessionId":"s2","comment":"Need follow-up","element":"div","elementPath":"body > div","thread":[{"id":"m1","role":"human","content":"Please also change color","timestamp":1}]}}`+"\n\n")
 			flusher.Flush()
 
 			<-request.Context().Done()

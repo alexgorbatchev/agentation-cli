@@ -135,7 +135,7 @@ func (c *Client) streamAnnotations(ctx context.Context, sessionID, projectID str
 		errs <- fmt.Errorf("opening watch stream: %w", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		errs <- fmt.Errorf("watch endpoint returned http %d", resp.StatusCode)

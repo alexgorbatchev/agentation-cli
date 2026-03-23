@@ -159,7 +159,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body any, targ
 	if err != nil {
 		return fmt.Errorf("sending request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(resp.Body)
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		payload, readErr := io.ReadAll(resp.Body)
@@ -194,4 +194,8 @@ func marshalBody(body any) (io.Reader, error) {
 		return nil, err
 	}
 	return bytes.NewReader(payload), nil
+}
+
+func closeResponseBody(body io.ReadCloser) {
+	_ = body.Close() // best-effort cleanup after the response body has been fully handled
 }

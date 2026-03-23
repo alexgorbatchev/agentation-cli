@@ -24,7 +24,9 @@ const shutdownTimeout = 5 * time.Second
 
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		printUsage(stdout)
+		if err := printUsage(stdout); err != nil {
+			return 1
+		}
 		return 0
 	}
 
@@ -41,7 +43,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "status":
 		return runStatus(stdout)
 	case "help", "--help", "-h":
-		printUsage(stdout)
+		if err := printUsage(stdout); err != nil {
+			return 1
+		}
 		return 0
 	default:
 		return runServe(args, stdout, stderr)
@@ -54,7 +58,9 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
-		fmt.Fprintf(stderr, "failed to parse router serve flags: %v\n", err)
+		if writeErr := writef(stderr, "failed to parse router serve flags: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -94,50 +100,70 @@ func runStart(args []string, stdout, stderr io.Writer) int {
 	controller := routerController()
 
 	if pid, ok := controller.LoadRunningPID(); ok {
-		fmt.Fprintf(stdout, "agentation router already running (pid %d)\n", pid)
+		if err := writef(stdout, "agentation router already running (pid %d)\n", pid); err != nil {
+			return 1
+		}
 		return 0
 	}
 
 	if foreground {
-		fmt.Fprintln(stdout, "starting agentation router in foreground")
+		if err := writeln(stdout, "starting agentation router in foreground"); err != nil {
+			return 1
+		}
 		return runServe(serveArgs, stdout, stderr)
 	}
 
 	logPath := logFilePath()
 	pid, err := controller.StartBackground("__serve-router", serveArgs, logPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "failed to start agentation router: %v\n", err)
+		if writeErr := writef(stderr, "failed to start agentation router: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
-	fmt.Fprintf(stdout, "agentation router started in background (pid %d)\n", pid)
-	fmt.Fprintf(stdout, "log: %s\n", logPath)
+	if err := writef(stdout, "agentation router started in background (pid %d)\n", pid); err != nil {
+		return 1
+	}
+	if err := writef(stdout, "log: %s\n", logPath); err != nil {
+		return 1
+	}
 	return 0
 }
 
 func runStop(stdout, stderr io.Writer) int {
 	pid, stopped, err := routerController().Stop(30, 100*time.Millisecond)
 	if err != nil {
-		fmt.Fprintf(stderr, "failed to stop agentation router: %v\n", err)
+		if writeErr := writef(stderr, "failed to stop agentation router: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	if !stopped {
-		fmt.Fprintln(stdout, "agentation router is not running")
+		if err := writeln(stdout, "agentation router is not running"); err != nil {
+			return 1
+		}
 		return 0
 	}
 
-	fmt.Fprintf(stdout, "agentation router stopped (pid %d)\n", pid)
+	if err := writef(stdout, "agentation router stopped (pid %d)\n", pid); err != nil {
+		return 1
+	}
 	return 0
 }
 
 func runStatus(stdout io.Writer) int {
 	pid, ok := routerController().LoadRunningPID()
 	if !ok {
-		fmt.Fprintln(stdout, "agentation router not running")
+		if err := writeln(stdout, "agentation router not running"); err != nil {
+			return 1
+		}
 		return 1
 	}
 
-	fmt.Fprintf(stdout, "agentation router running (pid %d)\n", pid)
+	if err := writef(stdout, "agentation router running (pid %d)\n", pid); err != nil {
+		return 1
+	}
 	return 0
 }
 
@@ -169,10 +195,32 @@ func routerController() procctl.Controller {
 	return procctl.New(pidFilePath(), "__serve-router")
 }
 
-func printUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "agentation router internal commands:")
-	fmt.Fprintln(writer, "  start [--foreground|--background] [serve flags]")
-	fmt.Fprintln(writer, "  stop")
-	fmt.Fprintln(writer, "  status")
-	fmt.Fprintln(writer, "  serve [flags] (run foreground server)")
+func printUsage(writer io.Writer) error {
+	if err := writeln(writer, "agentation router internal commands:"); err != nil {
+		return err
+	}
+	if err := writeln(writer, "  start [--foreground|--background] [serve flags]"); err != nil {
+		return err
+	}
+	if err := writeln(writer, "  stop"); err != nil {
+		return err
+	}
+	if err := writeln(writer, "  status"); err != nil {
+		return err
+	}
+	return writeln(writer, "  serve [flags] (run foreground server)")
+}
+
+func writef(writer io.Writer, format string, args ...any) error {
+	if _, err := fmt.Fprintf(writer, format, args...); err != nil {
+		return fmt.Errorf("writing output: %w", err)
+	}
+	return nil
+}
+
+func writeln(writer io.Writer, args ...any) error {
+	if _, err := fmt.Fprintln(writer, args...); err != nil {
+		return fmt.Errorf("writing output: %w", err)
+	}
+	return nil
 }

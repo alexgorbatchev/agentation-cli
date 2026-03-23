@@ -34,7 +34,7 @@ func TestPingRequiresTokenWhenConfigured(t *testing.T) {
 	if error != nil {
 		t.Fatalf("ping request returned error: %v", error)
 	}
-	defer response.Body.Close()
+	defer closeTestCloser(t, response.Body, "response body")
 
 	if response.StatusCode != nethttp.StatusUnauthorized {
 		t.Fatalf("ping status %d, want %d", response.StatusCode, nethttp.StatusUnauthorized)
@@ -77,7 +77,7 @@ func TestPingAllowsAuthorizedRequestWhenTokenConfigured(t *testing.T) {
 	if error != nil {
 		t.Fatalf("ping request returned error: %v", error)
 	}
-	defer response.Body.Close()
+	defer closeTestCloser(t, response.Body, "response body")
 
 	if response.StatusCode != nethttp.StatusNoContent {
 		t.Fatalf("ping status %d, want %d", response.StatusCode, nethttp.StatusNoContent)

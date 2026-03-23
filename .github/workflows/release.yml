@@ -10,7 +10,35 @@ permissions:
   id-token: write
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Check module hygiene
+        run: go mod tidy -diff
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.11.4
+
   release:
+    needs: verify
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
@@ -40,7 +68,7 @@ jobs:
         run: node ./scripts/setPackageVersions.js "${GITHUB_REF_NAME#v}"
 
       - name: Install npm packaging dependencies
-        run: npm install --ignore-scripts
+        run: npm ci --ignore-scripts
 
       - name: Stage platform packages from release archives
         run: node ./scripts/stageNpmPackages.js

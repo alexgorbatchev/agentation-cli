@@ -74,7 +74,9 @@ func TestRunGenerateUsageErrors(t *testing.T) {
 func TestPrintUsageIncludesGenerateCommand(t *testing.T) {
 	var output bytes.Buffer
 
-	printUsage(&output)
+	if err := printUsage(&output); err != nil {
+		t.Fatalf("printUsage error: %v", err)
+	}
 	mustContain(t, output.String(), "generate --fix-loop-skill")
 }
 
@@ -302,7 +304,9 @@ func TestPrintUsageIncludesProjectsCommand(t *testing.T) {
 
 	var output bytes.Buffer
 
-	printUsage(&output)
+	if err := printUsage(&output); err != nil {
+		t.Fatalf("printUsage error: %v", err)
+	}
 	mustContain(t, output.String(), "agentation - CLI companion for Agentation HTTP server (version 2.0.0)")
 	mustContain(t, output.String(), "projects [--base-url <url>]")
 	mustContain(t, output.String(), "project <project-id> [--base-url <url>] [--json]")

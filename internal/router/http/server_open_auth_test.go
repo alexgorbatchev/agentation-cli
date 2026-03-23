@@ -38,7 +38,7 @@ func TestOpenRequiresTokenWhenConfigured(t *testing.T) {
 	if error != nil {
 		t.Fatalf("open request returned error: %v", error)
 	}
-	defer response.Body.Close()
+	defer closeTestCloser(t, response.Body, "response body")
 
 	if response.StatusCode != nethttp.StatusUnauthorized {
 		t.Fatalf("open status %d, want %d", response.StatusCode, nethttp.StatusUnauthorized)
@@ -79,7 +79,7 @@ func TestOpenAllowsAuthorizedRequestWhenTokenConfigured(t *testing.T) {
 	if error != nil {
 		t.Fatalf("open request returned error: %v", error)
 	}
-	defer response.Body.Close()
+	defer closeTestCloser(t, response.Body, "response body")
 
 	if response.StatusCode != nethttp.StatusNoContent {
 		t.Fatalf("open status %d, want %d", response.StatusCode, nethttp.StatusNoContent)

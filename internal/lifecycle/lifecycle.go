@@ -47,16 +47,32 @@ func parseStartFlags(args []string, stderr io.Writer) (startConfig, error) {
 	flags := flag.NewFlagSet("agentation start", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() {
-		fmt.Fprintln(stderr, "Usage: agentation start [--server-addr host:port|0] [--router-addr host:port|0] [--foreground|--background]")
-		fmt.Fprintln(stderr)
-		fmt.Fprintln(stderr, "Options:")
+		if err := writeln(stderr, "Usage: agentation start [--server-addr host:port|0] [--router-addr host:port|0] [--foreground|--background]"); err != nil {
+			return
+		}
+		if err := writeln(stderr); err != nil {
+			return
+		}
+		if err := writeln(stderr, "Options:"); err != nil {
+			return
+		}
 		flags.PrintDefaults()
-		fmt.Fprintln(stderr)
-		fmt.Fprintln(stderr, "Examples:")
-		fmt.Fprintln(stderr, "  agentation start")
-		fmt.Fprintln(stderr, "  AGENTATION_SERVER_ADDR=0 agentation start")
-		fmt.Fprintln(stderr, "  AGENTATION_ROUTER_ADDR=0 agentation start")
-		fmt.Fprintln(stderr, "  agentation start --server-addr 127.0.0.1:4747 --router-addr 127.0.0.1:8787")
+		if err := writeln(stderr); err != nil {
+			return
+		}
+		if err := writeln(stderr, "Examples:"); err != nil {
+			return
+		}
+		if err := writeln(stderr, "  agentation start"); err != nil {
+			return
+		}
+		if err := writeln(stderr, "  AGENTATION_SERVER_ADDR=0 agentation start"); err != nil {
+			return
+		}
+		if err := writeln(stderr, "  AGENTATION_ROUTER_ADDR=0 agentation start"); err != nil {
+			return
+		}
+		_ = writeln(stderr, "  agentation start --server-addr 127.0.0.1:4747 --router-addr 127.0.0.1:8787")
 	}
 
 	serverAddrFlag := flags.String("server-addr", "", "Server address (default: AGENTATION_SERVER_ADDR or 127.0.0.1:4747; use 0 to disable)")

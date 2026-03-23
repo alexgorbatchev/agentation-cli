@@ -42,11 +42,11 @@ func RunWatch(ctx context.Context, client *api.Client, args []string, stdout, st
 	}
 
 	if output.Timeout {
-		fmt.Fprintln(stdout, output.Message)
-		return nil
+		return writeln(stdout, output.Message)
 	}
 
-	fmt.Fprintf(stdout, "Received %d annotation(s)\n", output.Count)
-	printWatchAnnotations(stdout, output.Annotations)
-	return nil
+	if err := writef(stdout, "Received %d annotation(s)\n", output.Count); err != nil {
+		return err
+	}
+	return printWatchAnnotations(stdout, output.Annotations)
 }

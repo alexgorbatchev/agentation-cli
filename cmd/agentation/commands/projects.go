@@ -181,12 +181,13 @@ func RunProjects(ctx context.Context, client *api.Client, args []string, stdout,
 	}
 
 	if len(projects) == 0 {
-		fmt.Fprintln(stdout, "No projects found.")
-		return nil
+		return writeln(stdout, "No projects found.")
 	}
 
 	for _, projectID := range projects {
-		fmt.Fprintln(stdout, projectID)
+		if err := writeln(stdout, projectID); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -233,15 +234,23 @@ func RunProject(ctx context.Context, client *api.Client, args []string, stdout, 
 		return writeJSON(stdout, summary)
 	}
 
-	fmt.Fprintf(stdout, "Project: %s\n", summary.ProjectID)
-	fmt.Fprintf(stdout, "Sessions: %d\n", summary.SessionCount)
-	fmt.Fprintf(stdout, "Annotations: %d\n", summary.AnnotationCount)
+	if err := writef(stdout, "Project: %s\n", summary.ProjectID); err != nil {
+		return err
+	}
+	if err := writef(stdout, "Sessions: %d\n", summary.SessionCount); err != nil {
+		return err
+	}
+	if err := writef(stdout, "Annotations: %d\n", summary.AnnotationCount); err != nil {
+		return err
+	}
 	if summary.SessionCount == 0 {
 		return nil
 	}
 
 	for _, session := range summary.Sessions {
-		fmt.Fprintf(stdout, "%s\t%s\t%s\tannotations=%d\n", session.ID, session.Status, session.URL, session.AnnotationCount)
+		if err := writef(stdout, "%s\t%s\t%s\tannotations=%d\n", session.ID, session.Status, session.URL, session.AnnotationCount); err != nil {
+			return err
+		}
 	}
 
 	return nil

@@ -28,12 +28,16 @@ func runStartCommand(args []string, stdout, stderr io.Writer) int {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
-		fmt.Fprintf(stderr, "failed to parse start flags: %v\n", err)
+		if writeErr := writef(stderr, "failed to parse start flags: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	if pid, ok := loadRunningPID(); ok {
-		fmt.Fprintf(stdout, "agentation already running (pid %d)\n", pid)
+		if err := writef(stdout, "agentation already running (pid %d)\n", pid); err != nil {
+			return 1
+		}
 		return 0
 	}
 
@@ -43,22 +47,28 @@ func runStartCommand(args []string, stdout, stderr io.Writer) int {
 
 	executablePath, err := os.Executable()
 	if err != nil {
-		fmt.Fprintf(stderr, "failed to resolve executable path: %v\n", err)
+		if writeErr := writef(stderr, "failed to resolve executable path: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	stackLogPath := stackLogFilePath()
 	if err := os.MkdirAll(filepath.Dir(stackLogPath), 0o755); err != nil {
-		fmt.Fprintf(stderr, "failed to create log directory: %v\n", err)
+		if writeErr := writef(stderr, "failed to create log directory: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	stackLogFile, err := os.OpenFile(stackLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		fmt.Fprintf(stderr, "failed to open log file: %v\n", err)
+		if writeErr := writef(stderr, "failed to open log file: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
-	defer stackLogFile.Close()
+	defer reportCloseError(stderr, "stack log file", stackLogFile)
 
 	commandArgs := []string{
 		"__serve-stack",
@@ -70,13 +80,17 @@ func runStartCommand(args []string, stdout, stderr io.Writer) int {
 	command.Stderr = stackLogFile
 
 	if err := command.Start(); err != nil {
-		fmt.Fprintf(stderr, "failed to start agentation: %v\n", err)
+		if writeErr := writef(stderr, "failed to start agentation: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	pid := command.Process.Pid
 	if err := writePID(pid); err != nil {
-		fmt.Fprintf(stderr, "failed to write pid file: %v\n", err)
+		if writeErr := writef(stderr, "failed to write pid file: %v\n", err); writeErr != nil {
+			return 1
+		}
 		_ = command.Process.Kill()
 		return 1
 	}
@@ -84,17 +98,27 @@ func runStartCommand(args []string, stdout, stderr io.Writer) int {
 	time.Sleep(250 * time.Millisecond)
 	if !isProcessRunning(pid) {
 		_ = removePIDFile()
-		fmt.Fprintln(stderr, "agentation failed to stay running")
+		if err := writeln(stderr, "agentation failed to stay running"); err != nil {
+			return 1
+		}
 		return 1
 	}
 
-	fmt.Fprintf(stdout, "agentation started in background (pid %d)\n", pid)
-	fmt.Fprintf(stdout, "log: %s\n", stackLogPath)
+	if err := writef(stdout, "agentation started in background (pid %d)\n", pid); err != nil {
+		return 1
+	}
+	if err := writef(stdout, "log: %s\n", stackLogPath); err != nil {
+		return 1
+	}
 	if cfg.serve.enableServer {
-		fmt.Fprintf(stdout, "server log: %s\n", serverLogFilePath())
+		if err := writef(stdout, "server log: %s\n", serverLogFilePath()); err != nil {
+			return 1
+		}
 	}
 	if cfg.serve.enableRouter {
-		fmt.Fprintf(stdout, "router log: %s\n", routerLogFilePath())
+		if err := writef(stdout, "router log: %s\n", routerLogFilePath()); err != nil {
+			return 1
+		}
 	}
 
 	return 0
@@ -106,7 +130,9 @@ func runServeCommand(args []string, stdout, stderr io.Writer) int {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
-		fmt.Fprintf(stderr, "failed to parse serve flags: %v\n", err)
+		if writeErr := writef(stderr, "failed to parse serve flags: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -115,26 +141,32 @@ func runServeCommand(args []string, stdout, stderr io.Writer) int {
 
 func runServeStack(cfg serveConfig, stdout, stderr io.Writer) int {
 	if !cfg.enableServer && !cfg.enableRouter {
-		fmt.Fprintln(stderr, "nothing to serve: both server and router are disabled")
+		if err := writeln(stderr, "nothing to serve: both server and router are disabled"); err != nil {
+			return 1
+		}
 		return 1
 	}
 
 	serverWriter, serverCloser, err := openServiceLogWriter(serverLogFilePath(), stdout)
 	if err != nil {
-		fmt.Fprintf(stderr, "failed to open server log file: %v\n", err)
+		if writeErr := writef(stderr, "failed to open server log file: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	if serverCloser != nil {
-		defer serverCloser.Close()
+		defer reportCloseError(stderr, "server log file", serverCloser)
 	}
 
 	routerWriter, routerCloser, err := openServiceLogWriter(routerLogFilePath(), stdout)
 	if err != nil {
-		fmt.Fprintf(stderr, "failed to open router log file: %v\n", err)
+		if writeErr := writef(stderr, "failed to open router log file: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	if routerCloser != nil {
-		defer routerCloser.Close()
+		defer reportCloseError(stderr, "router log file", routerCloser)
 	}
 
 	signalContext, stopSignal := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -154,14 +186,18 @@ func runServeStack(cfg serveConfig, stdout, stderr io.Writer) int {
 			}
 		}()
 	} else {
-		fmt.Fprintln(stdout, "agentation server disabled")
+		if err := writeln(stdout, "agentation server disabled"); err != nil {
+			return 1
+		}
 	}
 
 	var routerService *http.Server
 	if cfg.enableRouter {
 		routerCfg, cfgErr := routerconfig.Load([]string{"--address", cfg.routerAddr}, stderr)
 		if cfgErr != nil {
-			fmt.Fprintf(stderr, "failed to build router config: %v\n", cfgErr)
+			if writeErr := writef(stderr, "failed to build router config: %v\n", cfgErr); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 
@@ -177,13 +213,17 @@ func runServeStack(cfg serveConfig, stdout, stderr io.Writer) int {
 			}
 		}()
 	} else {
-		fmt.Fprintln(stdout, "agentation router disabled")
+		if err := writeln(stdout, "agentation router disabled"); err != nil {
+			return 1
+		}
 	}
 
 	select {
 	case <-signalContext.Done():
 	case err := <-serveErrors:
-		fmt.Fprintf(stderr, "%v\n", err)
+		if writeErr := writef(stderr, "%v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -193,14 +233,18 @@ func runServeStack(cfg serveConfig, stdout, stderr io.Writer) int {
 	shutdownErr := false
 	if routerService != nil {
 		if err := routerService.Shutdown(shutdownContext); err != nil && !errors.Is(err, context.Canceled) {
-			fmt.Fprintf(stderr, "agentation router shutdown failed: %v\n", err)
+			if writeErr := writef(stderr, "agentation router shutdown failed: %v\n", err); writeErr != nil {
+				return 1
+			}
 			shutdownErr = true
 		}
 	}
 
 	if serverService != nil {
 		if err := serverService.Shutdown(shutdownContext); err != nil && !errors.Is(err, context.Canceled) {
-			fmt.Fprintf(stderr, "agentation server shutdown failed: %v\n", err)
+			if writeErr := writef(stderr, "agentation server shutdown failed: %v\n", err); writeErr != nil {
+				return 1
+			}
 			shutdownErr = true
 		}
 	}

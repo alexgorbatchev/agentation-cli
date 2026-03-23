@@ -34,7 +34,8 @@ func RunPending(ctx context.Context, client *api.Client, args []string, stdout, 
 		return writeJSON(stdout, pending)
 	}
 
-	fmt.Fprintf(stdout, "Pending annotations: %d\n", pending.Count)
-	printPendingAnnotations(stdout, pending.Annotations)
-	return nil
+	if err := writef(stdout, "Pending annotations: %d\n", pending.Count); err != nil {
+		return err
+	}
+	return printPendingAnnotations(stdout, pending.Annotations)
 }

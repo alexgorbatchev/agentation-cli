@@ -389,7 +389,9 @@ func decodeJSONBody(request *http.Request, bodyLimit int64, target any) error {
 	if request.Body == nil {
 		return fmt.Errorf("request body is required")
 	}
-	defer request.Body.Close()
+	defer func() {
+		_ = request.Body.Close() // best-effort cleanup after the JSON payload has been consumed
+	}()
 
 	decoder := json.NewDecoder(io.LimitReader(request.Body, bodyLimit))
 	decoder.DisallowUnknownFields()

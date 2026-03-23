@@ -25,7 +25,9 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		printUsage(stdout)
+		if err := printUsage(stdout); err != nil {
+			return 1
+		}
 		return 0
 	}
 
@@ -61,14 +63,22 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "__serve-stack":
 		return lifecycle.RunServe(commandArgs, stdout, stderr)
 	case "version", "--version", "-v":
-		printVersion(stdout)
+		if err := printVersion(stdout); err != nil {
+			return 1
+		}
 		return 0
 	case "help", "--help", "-h":
-		printUsage(stdout)
+		if err := printUsage(stdout); err != nil {
+			return 1
+		}
 		return 0
 	default:
-		fmt.Fprintf(stderr, "error: unknown command %q\n\n", command)
-		printUsage(stderr)
+		if err := writef(stderr, "error: unknown command %q\n\n", command); err != nil {
+			return 1
+		}
+		if err := printUsage(stderr); err != nil {
+			return 1
+		}
 		return 1
 	}
 }
@@ -78,13 +88,17 @@ type apiCommandRunner func(context.Context, *api.Client, []string, io.Writer, io
 func runWithAPICommand(ctx context.Context, args []string, stdout, stderr io.Writer, runner apiCommandRunner) int {
 	baseURL, remainingArgs, err := extractBaseURL(args)
 	if err != nil {
-		fmt.Fprintf(stderr, "error: %v\n", err)
+		if writeErr := writef(stderr, "error: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	client := api.NewClient(baseURL)
 	if err := runner(ctx, client, remainingArgs, stdout, stderr); err != nil {
-		fmt.Fprintf(stderr, "error: %v\n", err)
+		if writeErr := writef(stderr, "error: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -93,7 +107,9 @@ func runWithAPICommand(ctx context.Context, args []string, stdout, stderr io.Wri
 
 func runWithFirstPositionalAPICommand(ctx context.Context, args []string, stdout, stderr io.Writer, runner apiCommandRunner, usage string) int {
 	if len(args) == 0 || strings.TrimSpace(args[0]) == "" || strings.HasPrefix(strings.TrimSpace(args[0]), "-") {
-		fmt.Fprintf(stderr, "error: usage: %s\n", usage)
+		if err := writef(stderr, "error: usage: %s\n", usage); err != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -174,36 +190,50 @@ func runGenerate(args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	fixLoopSkill := flags.Bool("fix-loop-skill", false, "Print embedded Agentation fix-loop skill markdown")
 	if err := flags.Parse(args); err != nil {
-		fmt.Fprintf(stderr, "error: %v\n", err)
+		if writeErr := writef(stderr, "error: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	if flags.NArg() > 0 {
-		fmt.Fprintln(stderr, "error: usage: generate --fix-loop-skill")
+		if err := writeln(stderr, "error: usage: generate --fix-loop-skill"); err != nil {
+			return 1
+		}
 		return 1
 	}
 
 	if !*fixLoopSkill {
-		fmt.Fprintln(stderr, "error: usage: generate --fix-loop-skill")
+		if err := writeln(stderr, "error: usage: generate --fix-loop-skill"); err != nil {
+			return 1
+		}
 		return 1
 	}
 
 	if _, err := io.WriteString(stdout, strings.TrimRight(fixLoopSkillContent, "\n")+"\n"); err != nil {
-		fmt.Fprintf(stderr, "error: %v\n", err)
+		if writeErr := writef(stderr, "error: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	return 0
 }
 
-func printVersion(writer io.Writer) {
-	fmt.Fprintf(writer, "agentation version %s\n", version)
+func printVersion(writer io.Writer) error {
+	return writef(writer, "agentation version %s\n", version)
 }
 
-func printUsage(writer io.Writer) {
-	fmt.Fprintf(writer, "agentation - CLI companion for Agentation HTTP server (version %s)\n", version)
-	fmt.Fprintln(writer)
-	fmt.Fprintln(writer, "Commands:")
+func printUsage(writer io.Writer) error {
+	if err := writef(writer, "agentation - CLI companion for Agentation HTTP server (version %s)\n", version); err != nil {
+		return err
+	}
+	if err := writeln(writer); err != nil {
+		return err
+	}
+	if err := writeln(writer, "Commands:"); err != nil {
+		return err
+	}
 	commands := []struct {
 		usage             string
 		usageContinuation string
@@ -232,27 +262,71 @@ func printUsage(writer io.Writer) {
 	}
 
 	for _, command := range commands {
-		fmt.Fprintf(writer, "  %-*s %s\n", maxUsageLength, command.usage, command.description)
+		if err := writef(writer, "  %-*s %s\n", maxUsageLength, command.usage, command.description); err != nil {
+			return err
+		}
 		if command.usageContinuation != "" {
 			continuationIndent := strings.Index(command.usage, "[")
 			if continuationIndent < 0 {
 				continuationIndent = len(command.usage) + 1
 			}
-			fmt.Fprintf(writer, "  %*s%s\n", continuationIndent, "", command.usageContinuation)
+			if err := writef(writer, "  %*s%s\n", continuationIndent, "", command.usageContinuation); err != nil {
+				return err
+			}
 		}
 	}
-	fmt.Fprintln(writer)
-	fmt.Fprintln(writer, "Examples:")
-	fmt.Fprintln(writer, "  agentation start")
-	fmt.Fprintln(writer, "  AGENTATION_SERVER_ADDR=127.0.0.1:5757 AGENTATION_ROUTER_ADDR=127.0.0.1:8787 agentation start")
-	fmt.Fprintln(writer, "  AGENTATION_SERVER_ADDR=0 agentation start")
-	fmt.Fprintln(writer, "  AGENTATION_ROUTER_ADDR=0 agentation start")
-	fmt.Fprintln(writer, "  agentation start --server-addr 127.0.0.1:4747 --router-addr 127.0.0.1:8787")
-	fmt.Fprintln(writer, "  AGENTATION_BASE_URL=http://127.0.0.1:4747 agentation projects --json")
-	fmt.Fprintln(writer, "  agentation project my-project --json")
-	fmt.Fprintln(writer, "  agentation pending my-project --json")
-	fmt.Fprintln(writer, "  agentation watch my-project --batch-window 5 --timeout 300 --json")
-	fmt.Fprintln(writer, "  agentation ack ann_123 --base-url http://127.0.0.1:4747")
-	fmt.Fprintln(writer, "  agentation resolve ann_123 --summary \"Updated spacing\"")
-	fmt.Fprintln(writer, "  agentation generate --fix-loop-skill")
+	if err := writeln(writer); err != nil {
+		return err
+	}
+	if err := writeln(writer, "Examples:"); err != nil {
+		return err
+	}
+	if err := writeln(writer, "  agentation start"); err != nil {
+		return err
+	}
+	if err := writeln(writer, "  AGENTATION_SERVER_ADDR=127.0.0.1:5757 AGENTATION_ROUTER_ADDR=127.0.0.1:8787 agentation start"); err != nil {
+		return err
+	}
+	if err := writeln(writer, "  AGENTATION_SERVER_ADDR=0 agentation start"); err != nil {
+		return err
+	}
+	if err := writeln(writer, "  AGENTATION_ROUTER_ADDR=0 agentation start"); err != nil {
+		return err
+	}
+	if err := writeln(writer, "  agentation start --server-addr 127.0.0.1:4747 --router-addr 127.0.0.1:8787"); err != nil {
+		return err
+	}
+	if err := writeln(writer, "  AGENTATION_BASE_URL=http://127.0.0.1:4747 agentation projects --json"); err != nil {
+		return err
+	}
+	if err := writeln(writer, "  agentation project my-project --json"); err != nil {
+		return err
+	}
+	if err := writeln(writer, "  agentation pending my-project --json"); err != nil {
+		return err
+	}
+	if err := writeln(writer, "  agentation watch my-project --batch-window 5 --timeout 300 --json"); err != nil {
+		return err
+	}
+	if err := writeln(writer, "  agentation ack ann_123 --base-url http://127.0.0.1:4747"); err != nil {
+		return err
+	}
+	if err := writeln(writer, "  agentation resolve ann_123 --summary \"Updated spacing\""); err != nil {
+		return err
+	}
+	return writeln(writer, "  agentation generate --fix-loop-skill")
+}
+
+func writef(writer io.Writer, format string, args ...any) error {
+	if _, err := fmt.Fprintf(writer, format, args...); err != nil {
+		return fmt.Errorf("writing output: %w", err)
+	}
+	return nil
+}
+
+func writeln(writer io.Writer, args ...any) error {
+	if _, err := fmt.Fprintln(writer, args...); err != nil {
+		return fmt.Errorf("writing output: %w", err)
+	}
+	return nil
 }

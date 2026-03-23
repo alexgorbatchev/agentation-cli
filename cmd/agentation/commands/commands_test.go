@@ -16,6 +16,13 @@ import (
 	"github.com/alexgorbatchev/agentation-cli/internal/api"
 )
 
+func mustWritef(t *testing.T, writer io.Writer, format string, args ...any) {
+	t.Helper()
+	if _, err := fmt.Fprintf(writer, format, args...); err != nil {
+		t.Fatalf("writing test response: %v", err)
+	}
+}
+
 func TestRunProjectsJSON(t *testing.T) {
 	now := time.Now().UTC()
 	recentCreatedAt := now.Add(-23 * time.Hour).Format(time.RFC3339Nano)
@@ -26,7 +33,7 @@ func TestRunProjectsJSON(t *testing.T) {
 		if request.URL.RequestURI() != "/sessions" {
 			t.Fatalf("request URI = %q, want %q", request.URL.RequestURI(), "/sessions")
 		}
-		_, _ = writer.Write([]byte(fmt.Sprintf(`[
+		mustWritef(t, writer, `[
 			{"id":"s1","projectId":"proj-b","createdAt":%q},
 			{"id":"s2","projectId":"proj-a","createdAt":%q},
 			{"id":"s3","projectId":"proj-b","createdAt":%q},
@@ -39,7 +46,7 @@ func TestRunProjectsJSON(t *testing.T) {
 			staleCreatedAt,
 			recentUpdatedAt,
 			recentCreatedAt,
-		)))
+		)
 	}))
 	defer testServer.Close()
 
@@ -145,10 +152,10 @@ func TestRunProjectConcurrentFetchKeepsSortedSessions(t *testing.T) {
 			time.Sleep(35 * time.Millisecond)
 			atomic.AddInt64(&inFlight, -1)
 
-			_, _ = writer.Write([]byte(fmt.Sprintf(`{"id":"%s","annotations":[{"id":"a-%s"}]}`,
+			mustWritef(t, writer, `{"id":"%s","annotations":[{"id":"a-%s"}]}`,
 				sessionID,
 				sessionID,
-			)))
+			)
 		default:
 			t.Fatalf("unexpected URI: %s", uri)
 		}
@@ -291,6 +298,53 @@ func TestRunWatchText(t *testing.T) {
 	mustContain(t, stdout.String(), "[1] ann_1")
 	mustContain(t, stdout.String(), "Need update")
 	mustContain(t, stdout.String(), "Session: s1")
+}
+
+func TestRunWatchJSONTimeout(t *testing.T) {
+	testServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.RequestURI() {
+		case "/pending?projectId=proj-1":
+			_, _ = writer.Write([]byte(`{"count":0,"annotations":[]}`))
+		case "/events?agent=true&projectId=proj-1":
+			writer.Header().Set("Content-Type", "text/event-stream")
+			flusher, ok := writer.(http.Flusher)
+			if !ok {
+				t.Fatal("missing flusher")
+			}
+			_, _ = writer.Write([]byte(": connected\n\n"))
+			flusher.Flush()
+			<-request.Context().Done()
+		default:
+			t.Fatalf("unexpected URI: %s", request.URL.RequestURI())
+		}
+	}))
+	defer testServer.Close()
+
+	client := api.NewClient(testServer.URL)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	err := RunWatch(context.Background(), client, []string{"proj-1", "--timeout", "1", "--json"}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("RunWatch returned error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	var output api.WatchOutput
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\n%s", err, stdout.String())
+	}
+	if !output.Timeout {
+		t.Fatalf("output.Timeout = %v, want true", output.Timeout)
+	}
+	if output.Message != "No new annotations within 1 seconds" {
+		t.Fatalf("output.Message = %q, want exact timeout message", output.Message)
+	}
+	if output.Count != 0 {
+		t.Fatalf("output.Count = %d, want 0", output.Count)
+	}
 }
 
 func TestRunActionCommands(t *testing.T) {

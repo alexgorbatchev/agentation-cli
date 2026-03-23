@@ -121,19 +121,37 @@ func (b *sqliteBackend) LoadSnapshot() (storeSnapshot, error) {
 		Events:      make(map[string][]Event),
 	}
 
-	sessionRows, err := b.db.Query(`SELECT id, url, status, created_at, COALESCE(updated_at, ''), COALESCE(project_id, ''), COALESCE(metadata_json, '') FROM sessions`)
-	if err != nil {
+	if err := b.loadSessions(&snapshot); err != nil {
 		return storeSnapshot{}, err
 	}
-	defer sessionRows.Close()
+	if err := b.loadAnnotations(&snapshot); err != nil {
+		return storeSnapshot{}, err
+	}
+	if err := b.loadEvents(&snapshot); err != nil {
+		return storeSnapshot{}, err
+	}
 
-	for sessionRows.Next() {
+	return snapshot, nil
+}
+
+func (b *sqliteBackend) loadSessions(snapshot *storeSnapshot) (err error) {
+	rows, err := b.db.Query(`SELECT id, url, status, created_at, COALESCE(updated_at, ''), COALESCE(project_id, ''), COALESCE(metadata_json, '') FROM sessions`)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
+
+	for rows.Next() {
 		var session Session
 		var updatedAt string
 		var projectID string
 		var metadataJSON string
-		if err := sessionRows.Scan(&session.ID, &session.URL, &session.Status, &session.CreatedAt, &updatedAt, &projectID, &metadataJSON); err != nil {
-			return storeSnapshot{}, err
+		if err := rows.Scan(&session.ID, &session.URL, &session.Status, &session.CreatedAt, &updatedAt, &projectID, &metadataJSON); err != nil {
+			return err
 		}
 		if updatedAt != "" {
 			session.UpdatedAt = updatedAt
@@ -146,48 +164,58 @@ func (b *sqliteBackend) LoadSnapshot() (storeSnapshot, error) {
 		}
 		snapshot.Sessions[session.ID] = session
 	}
-	if err := sessionRows.Err(); err != nil {
-		return storeSnapshot{}, err
-	}
 
-	annotationRows, err := b.db.Query(`SELECT id, data_json FROM annotations`)
+	return rows.Err()
+}
+
+func (b *sqliteBackend) loadAnnotations(snapshot *storeSnapshot) (err error) {
+	rows, err := b.db.Query(`SELECT id, data_json FROM annotations`)
 	if err != nil {
-		return storeSnapshot{}, err
+		return err
 	}
-	defer annotationRows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
-	for annotationRows.Next() {
+	for rows.Next() {
 		var annotationID string
 		var dataJSON string
-		if err := annotationRows.Scan(&annotationID, &dataJSON); err != nil {
-			return storeSnapshot{}, err
+		if err := rows.Scan(&annotationID, &dataJSON); err != nil {
+			return err
 		}
 		var annotation Annotation
 		if err := json.Unmarshal([]byte(dataJSON), &annotation); err != nil {
-			return storeSnapshot{}, err
+			return err
 		}
 		snapshot.Annotations[annotation.ID] = annotation
 	}
-	if err := annotationRows.Err(); err != nil {
-		return storeSnapshot{}, err
-	}
 
-	eventRows, err := b.db.Query(`SELECT sequence, session_id, data_json FROM events ORDER BY sequence ASC`)
+	return rows.Err()
+}
+
+func (b *sqliteBackend) loadEvents(snapshot *storeSnapshot) (err error) {
+	rows, err := b.db.Query(`SELECT sequence, session_id, data_json FROM events ORDER BY sequence ASC`)
 	if err != nil {
-		return storeSnapshot{}, err
+		return err
 	}
-	defer eventRows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
-	for eventRows.Next() {
+	for rows.Next() {
 		var sequence int64
 		var sessionID string
 		var dataJSON string
-		if err := eventRows.Scan(&sequence, &sessionID, &dataJSON); err != nil {
-			return storeSnapshot{}, err
+		if err := rows.Scan(&sequence, &sessionID, &dataJSON); err != nil {
+			return err
 		}
 		var event Event
 		if err := json.Unmarshal([]byte(dataJSON), &event); err != nil {
-			return storeSnapshot{}, err
+			return err
 		}
 		event.Sequence = sequence
 		if event.SessionID == "" {
@@ -198,11 +226,8 @@ func (b *sqliteBackend) LoadSnapshot() (storeSnapshot, error) {
 			snapshot.Sequence = sequence
 		}
 	}
-	if err := eventRows.Err(); err != nil {
-		return storeSnapshot{}, err
-	}
 
-	return snapshot, nil
+	return rows.Err()
 }
 
 func (b *sqliteBackend) UpsertSession(session Session) error {

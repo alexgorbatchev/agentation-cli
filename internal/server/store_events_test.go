@@ -51,13 +51,6 @@ func TestStoreGlobalSubscriptionDeliversBurstWithoutSilentDrop(t *testing.T) {
 	waitForPublishCompletion(t, publishDone, publishErr, 2*time.Second)
 }
 
-func nonBlockingSend(ch chan Event, event Event) {
-	select {
-	case ch <- event:
-	default:
-	}
-}
-
 func publishAnnotationsAsync(store *Store, sessionID string, count int) (<-chan struct{}, <-chan error) {
 	done := make(chan struct{})
 	errCh := make(chan error, 1)

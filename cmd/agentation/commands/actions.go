@@ -35,8 +35,7 @@ func RunAcknowledge(ctx context.Context, client *api.Client, args []string, stdo
 		return writeJSON(stdout, result)
 	}
 
-	fmt.Fprintf(stdout, "Acknowledged %s\n", annotationID)
-	return nil
+	return writef(stdout, "Acknowledged %s\n", annotationID)
 }
 
 func RunResolve(ctx context.Context, client *api.Client, args []string, stdout, stderr io.Writer) error {
@@ -68,8 +67,7 @@ func RunResolve(ctx context.Context, client *api.Client, args []string, stdout, 
 		return writeJSON(stdout, result)
 	}
 
-	fmt.Fprintf(stdout, "Resolved %s\n", annotationID)
-	return nil
+	return writef(stdout, "Resolved %s\n", annotationID)
 }
 
 func RunDismiss(ctx context.Context, client *api.Client, args []string, stdout, stderr io.Writer) error {
@@ -101,8 +99,7 @@ func RunDismiss(ctx context.Context, client *api.Client, args []string, stdout, 
 		return writeJSON(stdout, result)
 	}
 
-	fmt.Fprintf(stdout, "Dismissed %s\n", annotationID)
-	return nil
+	return writef(stdout, "Dismissed %s\n", annotationID)
 }
 
 func RunReply(ctx context.Context, client *api.Client, args []string, stdout, stderr io.Writer) error {
@@ -134,6 +131,5 @@ func RunReply(ctx context.Context, client *api.Client, args []string, stdout, st
 		return writeJSON(stdout, result)
 	}
 
-	fmt.Fprintf(stdout, "Replied to %s\n", annotationID)
-	return nil
+	return writef(stdout, "Replied to %s\n", annotationID)
 }
