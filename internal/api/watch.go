@@ -47,7 +47,7 @@ func (c *Client) Watch(ctx context.Context, opts WatchOptions) (*WatchOutput, er
 	watchCtx, cancel := context.WithTimeout(ctx, watchTimeout)
 	defer cancel()
 
-	events := make(chan Annotation, 32)
+	events := make(chan Annotation)
 	errs := make(chan error, 1)
 	go c.streamAnnotations(watchCtx, opts.SessionID, opts.ProjectID, events, errs)
 
