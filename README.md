@@ -4,6 +4,7 @@ CLI companion for the Agentation Fork.
 
 ## Related repositories
 
+- [agentation-fork.vercel.app](https://agentation-fork.vercel.app)
 - [Agentation Fork](https://github.com/alexgorbatchev/agentation)
 - [Agentation Skills](https://github.com/alexgorbatchev/agentation-skills)
 - [pi-agentation](https://github.com/alexgorbatchev/pi-agentation)
