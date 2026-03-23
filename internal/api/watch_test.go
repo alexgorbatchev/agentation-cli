@@ -53,7 +53,7 @@ func TestWatchCollectsSSEAnnotations(t *testing.T) {
 			}
 
 			fmt.Fprint(writer, ": connected\n\n")
-			fmt.Fprint(writer, `data: {"type":"annotation.created","sessionId":"s1","sequence":0,"payload":{"id":"ignored","sessionId":"s1","comment":"old"}}`+"\n\n")
+			fmt.Fprint(writer, `data: {"type":"annotation.created","sessionId":"s1","sequence":0,"payload":{"id":"a0","sessionId":"s1","comment":"Existing annotation","element":"p","elementPath":"body > p"}}`+"\n\n")
 			flusher.Flush()
 
 			time.Sleep(20 * time.Millisecond)
@@ -84,13 +84,16 @@ func TestWatchCollectsSSEAnnotations(t *testing.T) {
 	if output.Timeout {
 		t.Fatal("expected non-timeout output")
 	}
-	if output.Count != 2 {
-		t.Fatalf("output.Count = %d, want 2", output.Count)
+	if output.Count != 3 {
+		t.Fatalf("output.Count = %d, want 3", output.Count)
 	}
-	if output.Annotations[0].ID != "a1" {
-		t.Fatalf("first annotation ID = %s, want a1", output.Annotations[0].ID)
+	if output.Annotations[0].ID != "a0" {
+		t.Fatalf("first annotation ID = %s, want a0", output.Annotations[0].ID)
 	}
-	if output.Annotations[1].ID != "a2" {
-		t.Fatalf("second annotation ID = %s, want a2", output.Annotations[1].ID)
+	if output.Annotations[1].ID != "a1" {
+		t.Fatalf("second annotation ID = %s, want a1", output.Annotations[1].ID)
+	}
+	if output.Annotations[2].ID != "a2" {
+		t.Fatalf("third annotation ID = %s, want a2", output.Annotations[2].ID)
 	}
 }

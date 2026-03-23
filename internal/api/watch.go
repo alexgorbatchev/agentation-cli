@@ -119,7 +119,14 @@ func (c *Client) streamAnnotations(ctx context.Context, sessionID, projectID str
 	}
 	req.Header.Set("Accept", "text/event-stream")
 
-	resp, err := c.httpClient.Do(req)
+	httpClient := c.httpClient
+	if httpClient.Timeout != 0 {
+		clone := *httpClient
+		clone.Timeout = 0
+		httpClient = &clone
+	}
+
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			errs <- nil
@@ -181,9 +188,6 @@ func (c *Client) handleEventPayload(payload, sessionID string, out chan<- Annota
 		return
 	}
 
-	if event.Sequence == 0 {
-		return
-	}
 	if sessionID != "" && event.SessionID != sessionID {
 		return
 	}

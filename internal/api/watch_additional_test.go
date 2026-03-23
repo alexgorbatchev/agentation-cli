@@ -58,6 +58,47 @@ func TestWatchReturnsErrorWhenPendingFails(t *testing.T) {
 	}
 }
 
+func TestWatchIgnoresGenericHTTPClientTimeoutForStreaming(t *testing.T) {
+	testServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/pending":
+			_, _ = writer.Write([]byte(`{"count":0,"annotations":[]}`))
+		case "/events":
+			writer.Header().Set("Content-Type", "text/event-stream")
+			flusher, ok := writer.(http.Flusher)
+			if !ok {
+				t.Fatal("missing flusher")
+			}
+			_, _ = writer.Write([]byte(": connected\n\n"))
+			flusher.Flush()
+			time.Sleep(120 * time.Millisecond)
+			_, _ = writer.Write([]byte(`data: {"type":"annotation.created","sessionId":"s1","sequence":1,"payload":{"id":"a1","comment":"Fix","element":"button","elementPath":"body > button"}}` + "\n\n"))
+			flusher.Flush()
+			<-request.Context().Done()
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer testServer.Close()
+
+	client := NewClient(testServer.URL)
+	client.httpClient.Timeout = 50 * time.Millisecond
+
+	output, err := client.Watch(context.Background(), WatchOptions{
+		BatchWindow: 50 * time.Millisecond,
+		Timeout:     time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Watch returned error: %v", err)
+	}
+	if output.Timeout {
+		t.Fatalf("expected annotation before watch timeout, got %#v", output)
+	}
+	if output.Count != 1 || output.Annotations[0].ID != "a1" {
+		t.Fatalf("unexpected output: %#v", output)
+	}
+}
+
 func TestWatchUsesSessionEventsPath(t *testing.T) {
 	testServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
@@ -126,6 +167,42 @@ func TestWatchUsesProjectEventsPath(t *testing.T) {
 	}
 }
 
+func TestWatchReturnsInitialSyncAnnotations(t *testing.T) {
+	testServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.RequestURI() {
+		case "/pending?projectId=project-alpha":
+			_, _ = writer.Write([]byte(`{"count":0,"annotations":[]}`))
+		case "/events?agent=true&projectId=project-alpha":
+			writer.Header().Set("Content-Type", "text/event-stream")
+			flusher, ok := writer.(http.Flusher)
+			if !ok {
+				t.Fatal("missing flusher")
+			}
+			_, _ = writer.Write([]byte(`data: {"type":"annotation.created","sessionId":"s1","sequence":0,"payload":{"id":"a1","comment":"Fix","element":"button","elementPath":"body > button"}}` + "\n\n"))
+			_, _ = writer.Write([]byte("event: sync.complete\n"))
+			_, _ = writer.Write([]byte(`data: {"projectId":"project-alpha","count":1}` + "\n\n"))
+			flusher.Flush()
+			<-request.Context().Done()
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.RequestURI())
+		}
+	}))
+	defer testServer.Close()
+
+	client := NewClient(testServer.URL)
+	output, err := client.Watch(context.Background(), WatchOptions{
+		ProjectID:   "project-alpha",
+		BatchWindow: 50 * time.Millisecond,
+		Timeout:     time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Watch returned error: %v", err)
+	}
+	if output.Count != 1 || output.Annotations[0].ID != "a1" {
+		t.Fatalf("unexpected output: %#v", output)
+	}
+}
+
 func TestHandleEventPayloadFilters(t *testing.T) {
 	client := NewClient("http://localhost:4747")
 	out := make(chan Annotation, 10)
@@ -137,8 +214,11 @@ func TestHandleEventPayloadFilters(t *testing.T) {
 	client.handleEventPayload(`{"type":"thread.message","sessionId":"s1","sequence":1,"payload":{"id":"a3","thread":[{"role":"agent","content":"x","timestamp":1}]}}`, "", out)
 	client.handleEventPayload(`{"type":"unknown","sessionId":"s1","sequence":1,"payload":{"id":"a4"}}`, "", out)
 
-	if len(out) != 0 {
-		t.Fatalf("expected no forwarded annotations, got %d", len(out))
+	if len(out) != 1 {
+		t.Fatalf("expected 1 forwarded annotation from initial sync, got %d", len(out))
+	}
+	if ann := <-out; ann.ID != "a0" || ann.SessionID != "s1" {
+		t.Fatalf("unexpected initial sync annotation: %#v", ann)
 	}
 
 	client.handleEventPayload(`{"type":"annotation.created","sessionId":"s1","sequence":2,"payload":{"id":"a5","comment":"Fix","element":"button","elementPath":"body > button"}}`, "", out)

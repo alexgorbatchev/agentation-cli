@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -181,6 +183,46 @@ func TestRunWatchRequiresProjectIDAsFirstArg(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "usage: watch <project-id> [--batch-window 10] [--timeout 300] [--json]") {
 		t.Fatalf("expected first-arg usage error, got %v", err)
 	}
+}
+
+func TestRunWatchReturnsInitialSyncAnnotations(t *testing.T) {
+	testServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.RequestURI() {
+		case "/pending?projectId=project-alpha":
+			_, _ = writer.Write([]byte(`{"count":0,"annotations":[]}`))
+		case "/events?agent=true&projectId=project-alpha":
+			writer.Header().Set("Content-Type", "text/event-stream")
+			flusher, ok := writer.(http.Flusher)
+			if !ok {
+				t.Fatal("missing flusher")
+			}
+			_, _ = writer.Write([]byte(`data: {"type":"annotation.created","sessionId":"s1","sequence":0,"payload":{"id":"ann_1","comment":"test","element":"paragraph","elementPath":"body > p"}}` + "\n\n"))
+			_, _ = writer.Write([]byte("event: sync.complete\n"))
+			_, _ = writer.Write([]byte(`data: {"projectId":"project-alpha","count":1}` + "\n\n"))
+			flusher.Flush()
+			return
+		default:
+			t.Fatalf("unexpected URI: %s", request.URL.RequestURI())
+		}
+	}))
+	defer testServer.Close()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := run([]string{"watch", "project-alpha", "--base-url", testServer.URL, "--timeout", "1"}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("run(watch) exitCode = %d, want 0; stderr = %q", exitCode, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	output := stdout.String()
+	mustContain(t, output, "Received 1 annotation(s)")
+	mustContain(t, output, "[1] ann_1")
+	mustContain(t, output, "test")
+	mustContain(t, output, "Session: s1")
 }
 
 func TestRunProjectRequiresProjectID(t *testing.T) {
