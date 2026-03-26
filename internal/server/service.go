@@ -17,6 +17,7 @@ import (
 )
 
 const requestBodyLimit = 2 << 20
+const keepAliveInterval = 30 * time.Second
 
 type Service struct {
 	store *Store
@@ -115,11 +116,6 @@ func (s *Service) withCORS(next http.Handler) http.Handler {
 }
 
 func (s *Service) handleHealth(writer http.ResponseWriter, request *http.Request) {
-	projectID := strings.TrimSpace(request.URL.Query().Get("projectId"))
-	if projectID != "" {
-		s.store.TouchProject(projectID)
-	}
-
 	writeJSON(writer, http.StatusOK, map[string]any{"status": "ok", "mode": "local"})
 }
 
@@ -374,7 +370,7 @@ func (s *Service) handleSessionEvents(writer http.ResponseWriter, request *http.
 
 	events, unsubscribe := s.store.SubscribeSession(sessionID)
 	defer unsubscribe()
-	s.streamEvents(request.Context(), writer, events)
+	s.streamEvents(request.Context(), writer, sessionID, events)
 }
 
 func (s *Service) handleGlobalEvents(writer http.ResponseWriter, request *http.Request) {
@@ -403,8 +399,8 @@ func (s *Service) handleGlobalEvents(writer http.ResponseWriter, request *http.R
 	s.streamGlobalEvents(request.Context(), writer, events, domain, projectID)
 }
 
-func (s *Service) streamEvents(ctx context.Context, writer http.ResponseWriter, events <-chan Event) {
-	keepAlive := time.NewTicker(30 * time.Second)
+func (s *Service) streamEvents(ctx context.Context, writer http.ResponseWriter, sessionID string, events <-chan Event) {
+	keepAlive := time.NewTicker(keepAliveInterval)
 	defer keepAlive.Stop()
 
 	for {
@@ -414,6 +410,7 @@ func (s *Service) streamEvents(ctx context.Context, writer http.ResponseWriter, 
 				return
 			}
 		case <-keepAlive.C:
+			s.store.TouchSession(sessionID)
 			if err := writeSSEComment(writer, "ping"); err != nil {
 				return
 			}
@@ -426,7 +423,7 @@ func (s *Service) streamEvents(ctx context.Context, writer http.ResponseWriter, 
 }
 
 func (s *Service) streamGlobalEvents(ctx context.Context, writer http.ResponseWriter, events <-chan Event, domain, projectID string) {
-	keepAlive := time.NewTicker(30 * time.Second)
+	keepAlive := time.NewTicker(keepAliveInterval)
 	defer keepAlive.Stop()
 
 	for {

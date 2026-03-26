@@ -181,7 +181,7 @@ func TestHTTPAPIBranches(t *testing.T) {
 	}
 }
 
-func TestHealthProjectTouchMarksProjectActive(t *testing.T) {
+func TestHealthProjectTouchDoesNotMarkProjectActive(t *testing.T) {
 	t.Setenv("AGENTATION_STORE", "memory")
 	service := NewService("127.0.0.1:0", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	ts := httptest.NewServer(service.httpServer.Handler)
@@ -206,8 +206,8 @@ func TestHealthProjectTouchMarksProjectActive(t *testing.T) {
 	if !ok {
 		t.Fatal("expected session to remain available")
 	}
-	if updatedSession.UpdatedAt == 0 {
-		t.Fatal("health check with projectId should touch session UpdatedAt")
+	if updatedSession.UpdatedAt != 0 {
+		t.Fatalf("session.UpdatedAt = %d, want 0 after health check", updatedSession.UpdatedAt)
 	}
 }
 
@@ -373,7 +373,7 @@ func TestStreamFunctionsAndSync(t *testing.T) {
 		time.Sleep(30 * time.Millisecond)
 		cancel()
 	}()
-	service.streamEvents(ctx, writer, events)
+	service.streamEvents(ctx, writer, s1.ID, events)
 
 	globalWriter := newBufferSSEWriter(false)
 	globalEvents := make(chan Event, 3)
@@ -395,7 +395,7 @@ func TestStreamFunctionsAndSync(t *testing.T) {
 	errorWriter := newBufferSSEWriter(true)
 	errorEvents := make(chan Event, 1)
 	errorEvents <- Event{Type: EventAnnotationCreated, SessionID: s1.ID, Sequence: 5, Payload: map[string]any{"id": "x"}}
-	service.streamEvents(context.Background(), errorWriter, errorEvents)
+	service.streamEvents(context.Background(), errorWriter, s1.ID, errorEvents)
 }
 
 func TestSendInitialSyncUsesUnixMillisecondTimestamps(t *testing.T) {
