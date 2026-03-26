@@ -80,10 +80,21 @@ func isProcessRunning(pid int) bool {
 	return true
 }
 
-func loadRunningPID() (int, bool) {
+// Explicit PID file paths opt into isolated lifecycle state. In that mode we
+// must not fall back to machine-global process scans for unrelated stacks.
+func hasExplicitPIDFilePath() bool {
+	return strings.TrimSpace(os.Getenv("AGENTATION_PID_FILE")) != ""
+}
+
+func resolveRunningPID(syncFallbackPID bool) (int, bool) {
 	pid, err := readPID()
 	if err == nil && isProcessRunning(pid) {
 		return pid, true
+	}
+
+	if hasExplicitPIDFilePath() {
+		_ = removePIDFile()
+		return 0, false
 	}
 
 	fallbackPID, ok := findRunningPIDByScan()
@@ -92,8 +103,14 @@ func loadRunningPID() (int, bool) {
 		return 0, false
 	}
 
-	_ = writePID(fallbackPID)
+	if syncFallbackPID {
+		_ = writePID(fallbackPID)
+	}
 	return fallbackPID, true
+}
+
+func loadRunningPID() (int, bool) {
+	return resolveRunningPID(true)
 }
 
 func findRunningPIDByScan() (int, bool) {

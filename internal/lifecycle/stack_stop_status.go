@@ -19,17 +19,12 @@ func runStopCommand(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	pid, err := readPID()
-	if err != nil || !isProcessRunning(pid) {
-		fallbackPID, ok := findRunningPIDByScan()
-		if !ok {
-			_ = removePIDFile()
-			if err := writeln(stdout, "agentation is not running"); err != nil {
-				return 1
-			}
-			return 0
+	pid, ok := resolveRunningPID(false)
+	if !ok {
+		if err := writeln(stdout, "agentation is not running"); err != nil {
+			return 1
 		}
-		pid = fallbackPID
+		return 0
 	}
 
 	process, err := os.FindProcess(pid)
@@ -85,18 +80,12 @@ func runStatusCommand(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	pid, err := readPID()
-	if err != nil || !isProcessRunning(pid) {
-		fallbackPID, ok := findRunningPIDByScan()
-		if !ok {
-			_ = removePIDFile()
-			if err := writeln(stdout, "agentation not running"); err != nil {
-				return 1
-			}
+	pid, ok := resolveRunningPID(true)
+	if !ok {
+		if err := writeln(stdout, "agentation not running"); err != nil {
 			return 1
 		}
-		pid = fallbackPID
-		_ = writePID(pid)
+		return 1
 	}
 
 	if err := writef(stdout, "agentation running (pid %d)\n", pid); err != nil {

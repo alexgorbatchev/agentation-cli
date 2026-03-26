@@ -2,6 +2,8 @@ package lifecycle
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -111,5 +113,50 @@ func TestParseNoArgCommandRejectsPositional(t *testing.T) {
 	err := parseNoArgCommand("status", []string{"extra"}, &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("expected positional argument error")
+	}
+}
+
+func installFakePgrep(t *testing.T) string {
+	t.Helper()
+
+	binDir := t.TempDir()
+	markerPath := filepath.Join(binDir, "pgrep-called")
+	pgrepPath := filepath.Join(binDir, "pgrep")
+	script := "#!/bin/sh\nprintf called > \"$AGENTATION_TEST_SCAN_MARKER\"\nexit 1\n"
+	if err := os.WriteFile(pgrepPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake pgrep: %v", err)
+	}
+
+	currentPath := os.Getenv("PATH")
+	t.Setenv("AGENTATION_TEST_SCAN_MARKER", markerPath)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+currentPath)
+	return markerPath
+}
+
+func TestLoadRunningPID_SkipsGlobalScanWhenPIDFilePathIsExplicit(t *testing.T) {
+	markerPath := installFakePgrep(t)
+	pidPath := filepath.Join(t.TempDir(), "agentation.pid")
+	t.Setenv("AGENTATION_PID_FILE", pidPath)
+
+	if pid, ok := loadRunningPID(); ok || pid != 0 {
+		t.Fatalf("loadRunningPID() = (%d, %v), want (0, false)", pid, ok)
+	}
+
+	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
+		t.Fatalf("expected explicit AGENTATION_PID_FILE to skip global pgrep scan, stat err = %v", err)
+	}
+}
+
+func TestLoadRunningPID_UsesGlobalScanWithDefaultPIDPath(t *testing.T) {
+	markerPath := installFakePgrep(t)
+	t.Setenv("AGENTATION_PID_FILE", "")
+	t.Setenv("TMPDIR", t.TempDir())
+
+	if pid, ok := loadRunningPID(); ok || pid != 0 {
+		t.Fatalf("loadRunningPID() = (%d, %v), want (0, false)", pid, ok)
+	}
+
+	if _, err := os.Stat(markerPath); err != nil {
+		t.Fatalf("expected default lifecycle lookup to run pgrep fallback, stat err = %v", err)
 	}
 }
