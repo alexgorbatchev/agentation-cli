@@ -107,7 +107,7 @@ Process that batch first, then enter watch mode.
 1. Call:
 
 ```bash
-agentation watch <project-id> --timeout 300 --batch-window 10 --json
+agentation watch <project-id> --timeout 300 --json
 ```
 
 2. For each annotation in the returned batch:
@@ -165,7 +165,7 @@ Use `<project-id>` as the first argument for all pending/watch commands. Use tim
 ```bash
 agentation projects --json
 agentation pending <project-id> --json
-agentation watch <project-id> --timeout 300 --batch-window 10 --json
+agentation watch <project-id> --timeout 300 --json
 ```
 
 ## Loop template
@@ -176,18 +176,18 @@ Round 1:
   -> process all returned annotations
 
 Round 2:
-  agentation watch <project-id> --timeout 300 --batch-window 10 --json
+  agentation watch <project-id> --timeout 300 --json
   -> got 2 annotations
   -> ack #1, fix, resolve #1
   -> ack #2, reply (needs clarification)
 
 Round 3:
-  agentation watch <project-id> --timeout 300 --batch-window 10 --json
+  agentation watch <project-id> --timeout 300 --json
   -> got 1 annotation (clarification follow-up)
   -> ack, fix, resolve
 
 Round 4:
-  agentation watch <project-id> --timeout 300 --batch-window 10 --json
+  agentation watch <project-id> --timeout 300 --json
   -> timeout true, no annotations
   -> exit (or continue if user requested persistent watch mode)
 ```

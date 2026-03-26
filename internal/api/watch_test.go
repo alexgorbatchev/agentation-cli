@@ -43,7 +43,7 @@ func mustWriteString(t *testing.T, writer io.Writer, value string) {
 	}
 }
 
-func TestWatchCollectsSSEAnnotations(t *testing.T) {
+func TestWatchReturnsFirstSSEAnnotationImmediately(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/pending":
@@ -80,9 +80,9 @@ func TestWatchCollectsSSEAnnotations(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL)
+	start := time.Now()
 	output, err := client.Watch(context.Background(), WatchOptions{
-		BatchWindow: 80 * time.Millisecond,
-		Timeout:     2 * time.Second,
+		Timeout: 2 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("Watch returned error: %v", err)
@@ -91,16 +91,13 @@ func TestWatchCollectsSSEAnnotations(t *testing.T) {
 	if output.Timeout {
 		t.Fatal("expected non-timeout output")
 	}
-	if output.Count != 3 {
-		t.Fatalf("output.Count = %d, want 3", output.Count)
+	if elapsed := time.Since(start); elapsed >= time.Second {
+		t.Fatalf("Watch returned too slowly: %v", elapsed)
+	}
+	if output.Count != 1 {
+		t.Fatalf("output.Count = %d, want 1", output.Count)
 	}
 	if output.Annotations[0].ID != "a0" {
 		t.Fatalf("first annotation ID = %s, want a0", output.Annotations[0].ID)
-	}
-	if output.Annotations[1].ID != "a1" {
-		t.Fatalf("second annotation ID = %s, want a1", output.Annotations[1].ID)
-	}
-	if output.Annotations[2].ID != "a2" {
-		t.Fatalf("third annotation ID = %s, want a2", output.Annotations[2].ID)
 	}
 }

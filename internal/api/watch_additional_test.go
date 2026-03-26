@@ -85,8 +85,7 @@ func TestWatchIgnoresGenericHTTPClientTimeoutForStreaming(t *testing.T) {
 	client.httpClient.Timeout = 50 * time.Millisecond
 
 	output, err := client.Watch(context.Background(), WatchOptions{
-		BatchWindow: 50 * time.Millisecond,
-		Timeout:     time.Second,
+		Timeout: time.Second,
 	})
 	if err != nil {
 		t.Fatalf("Watch returned error: %v", err)
@@ -121,9 +120,8 @@ func TestWatchUsesSessionEventsPath(t *testing.T) {
 
 	client := NewClient(testServer.URL)
 	output, err := client.Watch(context.Background(), WatchOptions{
-		SessionID:   "s1",
-		BatchWindow: 50 * time.Millisecond,
-		Timeout:     2 * time.Second,
+		SessionID: "s1",
+		Timeout:   2 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("Watch returned error: %v", err)
@@ -155,9 +153,8 @@ func TestWatchUsesProjectEventsPath(t *testing.T) {
 
 	client := NewClient(testServer.URL)
 	output, err := client.Watch(context.Background(), WatchOptions{
-		ProjectID:   "project-alpha",
-		BatchWindow: 50 * time.Millisecond,
-		Timeout:     2 * time.Second,
+		ProjectID: "project-alpha",
+		Timeout:   2 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("Watch returned error: %v", err)
@@ -191,9 +188,8 @@ func TestWatchReturnsInitialSyncAnnotations(t *testing.T) {
 
 	client := NewClient(testServer.URL)
 	output, err := client.Watch(context.Background(), WatchOptions{
-		ProjectID:   "project-alpha",
-		BatchWindow: 50 * time.Millisecond,
-		Timeout:     time.Second,
+		ProjectID: "project-alpha",
+		Timeout:   time.Second,
 	})
 	if err != nil {
 		t.Fatalf("Watch returned error: %v", err)
@@ -251,8 +247,7 @@ func TestWatchReturnsCollectedOnStreamError(t *testing.T) {
 
 	client := NewClient(testServer.URL)
 	output, err := client.Watch(context.Background(), WatchOptions{
-		BatchWindow: 2 * time.Second,
-		Timeout:     3 * time.Second,
+		Timeout: 3 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("Watch returned error: %v", err)

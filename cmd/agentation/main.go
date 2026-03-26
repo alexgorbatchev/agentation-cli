@@ -51,7 +51,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "reply":
 		return runWithFirstPositionalAPICommand(ctx, commandArgs, stdout, stderr, runReply, "reply <annotation-id> [--base-url <url>] --message text [--json]")
 	case "watch":
-		return runWithFirstPositionalAPICommand(ctx, commandArgs, stdout, stderr, runWatch, "watch <project-id> [--base-url <url>] [--batch-window 10] [--timeout 300] [--json]")
+		return runWithFirstPositionalAPICommand(ctx, commandArgs, stdout, stderr, runWatch, "watch <project-id> [--base-url <url>] [--timeout 300] [--json]")
 	case "generate":
 		return runGenerate(commandArgs, stdout, stderr)
 	case "start":
@@ -251,7 +251,7 @@ func printUsage(writer io.Writer) error {
 		{"status", "", "Show local service status"},
 		{"stop", "", "Stop local services (single PID)"},
 		{"version", "", "Print CLI version"},
-		{"watch <project-id> [--base-url <url>] [--batch-window 10]", "[--timeout 300] [--json]", "Wait for new annotations/thread replies"},
+		{"watch <project-id> [--base-url <url>] [--timeout 300] [--json]", "", "Wait for the next annotation/thread reply"},
 	}
 
 	maxUsageLength := 0
@@ -305,7 +305,7 @@ func printUsage(writer io.Writer) error {
 	if err := writeln(writer, "  agentation pending my-project --json"); err != nil {
 		return err
 	}
-	if err := writeln(writer, "  agentation watch my-project --batch-window 5 --timeout 300 --json"); err != nil {
+	if err := writeln(writer, "  agentation watch my-project --timeout 300 --json"); err != nil {
 		return err
 	}
 	if err := writeln(writer, "  agentation ack ann_123 --base-url http://127.0.0.1:4747"); err != nil {

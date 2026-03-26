@@ -71,7 +71,7 @@ Commands:
 - `start [--server-addr host:port|0] [--router-addr host:port|0] [--foreground|--background]`
 - `status`
 - `stop`
-- `watch <project-id> [--base-url <url>] [--batch-window 10] [--timeout 300] [--json]`
+- `watch <project-id> [--base-url <url>] [--timeout 300] [--json]`
 
 Add `--json` to API/data commands for machine-readable output.
 
@@ -90,7 +90,7 @@ Use `projects` to discover project IDs with activity in the last 24 hours.
 agentation projects --json
 agentation project project-alpha --json
 agentation pending project-alpha --json
-agentation watch project-alpha --timeout 300 --batch-window 10 --json
+agentation watch project-alpha --timeout 300 --json
 ```
 
 ## Router token auth (`AGENTATION_ROUTER_TOKEN`)
@@ -110,11 +110,11 @@ Provide the token using either:
 
 ## SSE delivery semantics (`watch` / `/events`)
 
-`agentation watch` first drains `/pending`, then listens on SSE (`/events?agent=true` or `/sessions/{id}/events?agent=true`).
+`agentation watch` first drains `/pending`, then listens on SSE (`/events?agent=true` or `/sessions/{id}/events?agent=true`) and returns as soon as the next annotation or human thread reply arrives.
 
 Operational guarantees/limits:
 
-- Events include a monotonically increasing sequence ID (`id` in SSE frames).
+- Persisted stream events include a monotonically increasing sequence ID (`id` in SSE frames). Bootstrap sync snapshots may use sequence `0` before live events begin.
 - Server keepalives are emitted as SSE comments (`: ping`) every ~30s.
 - Delivery uses explicit backpressure semantics to avoid silent event drops under load.
 - Trade-off: a consistently slow consumer can increase end-to-end latency while pressure is applied.

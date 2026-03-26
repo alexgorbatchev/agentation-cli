@@ -172,7 +172,7 @@ func TestRunWatchRequiresProjectID(t *testing.T) {
 	var stderr bytes.Buffer
 
 	err := runWatch(t.Context(), nil, []string{}, &stdout, &stderr)
-	if err == nil || !strings.Contains(err.Error(), "usage: watch <project-id> [--batch-window 10] [--timeout 300] [--json]") {
+	if err == nil || !strings.Contains(err.Error(), "usage: watch <project-id> [--timeout 300] [--json]") {
 		t.Fatalf("expected required project usage error, got %v", err)
 	}
 }
@@ -182,7 +182,7 @@ func TestRunWatchRequiresProjectIDAsFirstArg(t *testing.T) {
 	var stderr bytes.Buffer
 
 	err := runWatch(t.Context(), nil, []string{"--json", "project-1"}, &stdout, &stderr)
-	if err == nil || !strings.Contains(err.Error(), "usage: watch <project-id> [--batch-window 10] [--timeout 300] [--json]") {
+	if err == nil || !strings.Contains(err.Error(), "usage: watch <project-id> [--timeout 300] [--json]") {
 		t.Fatalf("expected first-arg usage error, got %v", err)
 	}
 }
@@ -312,8 +312,7 @@ func TestPrintUsageIncludesProjectsCommand(t *testing.T) {
 	mustContain(t, output.String(), "project <project-id> [--base-url <url>] [--json]")
 	mustContain(t, output.String(), "pending <project-id> [--base-url <url>] [--json]")
 	mustContain(t, output.String(), "version")
-	mustContain(t, output.String(), "watch <project-id> [--base-url <url>] [--batch-window 10]")
-	mustContain(t, output.String(), "[--timeout 300] [--json]")
+	mustContain(t, output.String(), "watch <project-id> [--base-url <url>] [--timeout 300] [--json]")
 }
 
 func mustContain(t *testing.T, text, want string) {

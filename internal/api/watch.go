@@ -13,9 +13,7 @@ import (
 )
 
 const (
-	defaultBatchWindow  = 10 * time.Second
 	defaultWatchTimeout = 300 * time.Second
-	maxBatchWindow      = 60 * time.Second
 	maxWatchTimeout     = 300 * time.Second
 )
 
@@ -27,7 +25,6 @@ type afsEvent struct {
 }
 
 func (c *Client) Watch(ctx context.Context, opts WatchOptions) (*WatchOutput, error) {
-	batchWindow := clampDuration(opts.BatchWindow, defaultBatchWindow, time.Second, maxBatchWindow)
 	watchTimeout := clampDuration(opts.Timeout, defaultWatchTimeout, time.Second, maxWatchTimeout)
 
 	pending, err := c.GetPending(ctx, opts.SessionID, opts.ProjectID)
@@ -51,46 +48,21 @@ func (c *Client) Watch(ctx context.Context, opts WatchOptions) (*WatchOutput, er
 	errs := make(chan error, 1)
 	go c.streamAnnotations(watchCtx, opts.SessionID, opts.ProjectID, events, errs)
 
-	collected := make(map[string]Annotation)
-	order := make([]string, 0)
-	var batchTimer *time.Timer
-	var batchDone <-chan time.Time
-
 	for {
 		select {
 		case ann := <-events:
 			if ann.ID == "" {
 				continue
 			}
-			if _, exists := collected[ann.ID]; !exists {
-				order = append(order, ann.ID)
-			}
-			collected[ann.ID] = ann
-
-			if batchTimer == nil {
-				batchTimer = time.NewTimer(batchWindow)
-				batchDone = batchTimer.C
-			}
-
-		case <-batchDone:
-			return buildWatchOutput(collected, order), nil
+			return buildWatchOutput(map[string]Annotation{ann.ID: ann}, []string{ann.ID}), nil
 
 		case err := <-errs:
-			if len(collected) > 0 {
-				return buildWatchOutput(collected, order), nil
-			}
 			if err == nil {
 				continue
 			}
 			return nil, fmt.Errorf("watch stream failed: %w", err)
 
 		case <-watchCtx.Done():
-			if batchTimer != nil {
-				batchTimer.Stop()
-			}
-			if len(collected) > 0 {
-				return buildWatchOutput(collected, order), nil
-			}
 			if errors.Is(watchCtx.Err(), context.DeadlineExceeded) {
 				return &WatchOutput{
 					Timeout: true,
