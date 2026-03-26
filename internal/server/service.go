@@ -319,7 +319,7 @@ func (s *Service) handleRequestAction(writer http.ResponseWriter, request *http.
 		SessionID:   sessionID,
 		Annotations: session.Annotations,
 		Output:      input.Output,
-		RequestedAt: nowISO(),
+		RequestedAt: nowUnixMilli(),
 	}
 	s.store.EmitActionRequested(sessionID, action)
 
@@ -469,7 +469,7 @@ func (s *Service) sendInitialSync(writer http.ResponseWriter, domain, projectID 
 		for _, annotation := range annotations {
 			event := Event{
 				Type:      EventAnnotationCreated,
-				Timestamp: annotation.CreatedAt,
+				Timestamp: nowUnixMilli(),
 				SessionID: session.ID,
 				Sequence:  0,
 				Payload:   annotation,
@@ -485,7 +485,7 @@ func (s *Service) sendInitialSync(writer http.ResponseWriter, domain, projectID 
 		"domain":    valueOr(domain, "all"),
 		"projectId": valueOr(trimmedProjectID, "all"),
 		"count":     count,
-		"timestamp": nowISO(),
+		"timestamp": nowUnixMilli(),
 	}
 	_ = writeSSECustomEvent(writer, "sync.complete", syncPayload)
 }

@@ -73,16 +73,11 @@ func recentProjectIDs(sessions []api.Session, now time.Time) []string {
 }
 
 func sessionActivityTime(session api.Session) (time.Time, bool) {
-	for _, timestamp := range []string{session.UpdatedAt, session.CreatedAt} {
-		trimmedTimestamp := strings.TrimSpace(timestamp)
-		if trimmedTimestamp == "" {
-			continue
-		}
-
-		activityTime, err := time.Parse(time.RFC3339Nano, trimmedTimestamp)
-		if err == nil {
-			return activityTime, true
-		}
+	if session.UpdatedAt != 0 {
+		return session.UpdatedAt.Time(), true
+	}
+	if session.CreatedAt != 0 {
+		return session.CreatedAt.Time(), true
 	}
 
 	return time.Time{}, false

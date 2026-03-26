@@ -86,8 +86,8 @@ func (b *sqliteBackend) init() error {
 			id TEXT PRIMARY KEY,
 			url TEXT NOT NULL,
 			status TEXT NOT NULL,
-			created_at TEXT NOT NULL,
-			updated_at TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER,
 			project_id TEXT,
 			metadata_json TEXT
 		);`,
@@ -95,7 +95,7 @@ func (b *sqliteBackend) init() error {
 			id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL,
 			data_json TEXT NOT NULL,
-			updated_at TEXT,
+			updated_at INTEGER,
 			FOREIGN KEY(session_id) REFERENCES sessions(id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS events (
@@ -135,7 +135,7 @@ func (b *sqliteBackend) LoadSnapshot() (storeSnapshot, error) {
 }
 
 func (b *sqliteBackend) loadSessions(snapshot *storeSnapshot) (err error) {
-	rows, err := b.db.Query(`SELECT id, url, status, created_at, COALESCE(updated_at, ''), COALESCE(project_id, ''), COALESCE(metadata_json, '') FROM sessions`)
+	rows, err := b.db.Query(`SELECT id, url, status, created_at, updated_at, COALESCE(project_id, ''), COALESCE(metadata_json, '') FROM sessions`)
 	if err != nil {
 		return err
 	}
@@ -147,14 +147,10 @@ func (b *sqliteBackend) loadSessions(snapshot *storeSnapshot) (err error) {
 
 	for rows.Next() {
 		var session Session
-		var updatedAt string
 		var projectID string
 		var metadataJSON string
-		if err := rows.Scan(&session.ID, &session.URL, &session.Status, &session.CreatedAt, &updatedAt, &projectID, &metadataJSON); err != nil {
+		if err := rows.Scan(&session.ID, &session.URL, &session.Status, &session.CreatedAt, &session.UpdatedAt, &projectID, &metadataJSON); err != nil {
 			return err
-		}
-		if updatedAt != "" {
-			session.UpdatedAt = updatedAt
 		}
 		if projectID != "" {
 			session.ProjectID = projectID
@@ -254,7 +250,7 @@ func (b *sqliteBackend) UpsertSession(session Session) error {
 		session.URL,
 		session.Status,
 		session.CreatedAt,
-		emptyToNil(session.UpdatedAt),
+		zeroUnixMilliToNil(session.UpdatedAt),
 		emptyToNil(session.ProjectID),
 		emptyToNil(metadataJSON),
 	)
@@ -277,7 +273,7 @@ func (b *sqliteBackend) UpsertAnnotation(annotation Annotation) error {
 		annotation.ID,
 		annotation.SessionID,
 		string(payload),
-		emptyToNil(annotation.UpdatedAt),
+		zeroUnixMilliToNil(annotation.UpdatedAt),
 	)
 	return err
 }
@@ -310,6 +306,13 @@ func (b *sqliteBackend) Close() error {
 
 func emptyToNil(value string) any {
 	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
+}
+
+func zeroUnixMilliToNil(value UnixMilli) any {
+	if value == 0 {
 		return nil
 	}
 	return value

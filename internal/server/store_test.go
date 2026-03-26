@@ -65,15 +65,15 @@ func TestStoreCoreFlows(t *testing.T) {
 	if !ok {
 		t.Fatal("UpdateAnnotation should succeed")
 	}
-	if resolved.ResolvedAt == "" || resolved.ResolvedBy == "" {
+	if resolved.ResolvedAt == 0 || resolved.ResolvedBy == "" {
 		t.Fatalf("resolved annotation should set resolution metadata: %#v", resolved)
 	}
 
-	updated, ok := store.UpdateAnnotation(annotation.ID, map[string]any{"comment": "Updated", "resolvedBy": "human", "resolvedAt": "custom-time"})
+	updated, ok := store.UpdateAnnotation(annotation.ID, map[string]any{"comment": "Updated", "resolvedBy": "human"})
 	if !ok {
 		t.Fatal("UpdateAnnotation second patch should succeed")
 	}
-	if updated.Comment != "Updated" || updated.ResolvedBy != "human" || updated.ResolvedAt != "custom-time" {
+	if updated.Comment != "Updated" || updated.ResolvedBy != "human" || updated.ResolvedAt != resolved.ResolvedAt {
 		t.Fatalf("unexpected updated annotation: %#v", updated)
 	}
 
@@ -113,10 +113,25 @@ func TestStoreCoreFlows(t *testing.T) {
 		t.Fatal("GetEventsSince should return session events")
 	}
 
-	store.EmitActionRequested(session.ID, ActionRequest{SessionID: session.ID, Output: "do work"})
+	requestedAt := nowUnixMilli()
+	store.EmitActionRequested(session.ID, ActionRequest{SessionID: session.ID, Output: "do work", RequestedAt: requestedAt})
 	eventsSinceOne := store.GetEventsSince(session.ID, 1)
 	if len(eventsSinceOne) == 0 {
 		t.Fatal("EmitActionRequested should append event")
+	}
+	lastEvent := eventsSinceOne[len(eventsSinceOne)-1]
+	if lastEvent.Type != EventActionRequested {
+		t.Fatalf("last event type = %q, want %q", lastEvent.Type, EventActionRequested)
+	}
+	if lastEvent.Timestamp <= 0 {
+		t.Fatalf("last event timestamp = %d, want positive unix millis", lastEvent.Timestamp)
+	}
+	requestPayload, ok := lastEvent.Payload.(ActionRequest)
+	if !ok {
+		t.Fatalf("last event payload type = %T, want ActionRequest", lastEvent.Payload)
+	}
+	if requestPayload.RequestedAt != requestedAt {
+		t.Fatalf("requestPayload.RequestedAt = %d, want %d", requestPayload.RequestedAt, requestedAt)
 	}
 
 	if _, ok := store.DeleteAnnotation("missing"); ok {
@@ -132,8 +147,8 @@ func TestStoreTouchesSessionUpdatedAtOnActivity(t *testing.T) {
 	t.Setenv("AGENTATION_STORE", "memory")
 	store := NewStore()
 	session := store.CreateSession("http://example.com/page", "project-1")
-	if session.UpdatedAt != "" {
-		t.Fatalf("session.UpdatedAt = %q, want empty on create", session.UpdatedAt)
+	if session.UpdatedAt != 0 {
+		t.Fatalf("session.UpdatedAt = %d, want 0 on create", session.UpdatedAt)
 	}
 
 	annotation, ok := store.AddAnnotation(session.ID, Annotation{Comment: "A", Element: "button", ElementPath: "body > button"})
@@ -145,7 +160,7 @@ func TestStoreTouchesSessionUpdatedAtOnActivity(t *testing.T) {
 	if !ok {
 		t.Fatal("GetSession should find created session")
 	}
-	if updatedSession.UpdatedAt == "" {
+	if updatedSession.UpdatedAt == 0 {
 		t.Fatal("AddAnnotation should touch session UpdatedAt")
 	}
 
@@ -352,7 +367,7 @@ func TestStorePersistenceHelpersWithFailingBackend(t *testing.T) {
 	store := NewStore()
 	store.persistence = failingBackend{}
 
-	store.persistSessionLocked(Session{ID: "s1", URL: "http://example.com", Status: "active", CreatedAt: nowISO()})
+	store.persistSessionLocked(Session{ID: "s1", URL: "http://example.com", Status: "active", CreatedAt: nowUnixMilli()})
 	store.persistAnnotationLocked(Annotation{ID: "a1", SessionID: "s1", Comment: "x", Element: "button", ElementPath: "body > button"})
 	store.deleteAnnotationLocked("a1")
 	store.persistEventLocked(Event{Sequence: 1, SessionID: "s1", Type: EventAnnotationCreated, Payload: map[string]any{"id": "a1"}})

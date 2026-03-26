@@ -188,8 +188,8 @@ func TestHealthProjectTouchMarksProjectActive(t *testing.T) {
 	defer ts.Close()
 
 	session := service.store.CreateSession("http://example.com/alpha", "project-alpha")
-	if session.UpdatedAt != "" {
-		t.Fatalf("session.UpdatedAt = %q, want empty on create", session.UpdatedAt)
+	if session.UpdatedAt != 0 {
+		t.Fatalf("session.UpdatedAt = %d, want 0 on create", session.UpdatedAt)
 	}
 
 	response, err := http.Get(ts.URL + "/health?projectId=project-alpha")
@@ -206,7 +206,7 @@ func TestHealthProjectTouchMarksProjectActive(t *testing.T) {
 	if !ok {
 		t.Fatal("expected session to remain available")
 	}
-	if updatedSession.UpdatedAt == "" {
+	if updatedSession.UpdatedAt == 0 {
 		t.Fatal("health check with projectId should touch session UpdatedAt")
 	}
 }
@@ -396,6 +396,54 @@ func TestStreamFunctionsAndSync(t *testing.T) {
 	errorEvents := make(chan Event, 1)
 	errorEvents <- Event{Type: EventAnnotationCreated, SessionID: s1.ID, Sequence: 5, Payload: map[string]any{"id": "x"}}
 	service.streamEvents(context.Background(), errorWriter, errorEvents)
+}
+
+func TestSendInitialSyncUsesUnixMillisecondTimestamps(t *testing.T) {
+	t.Setenv("AGENTATION_STORE", "memory")
+	service := NewService("127.0.0.1:0", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	session := service.store.CreateSession("http://example.com/page", "")
+	annotation, ok := service.store.AddAnnotation(session.ID, Annotation{Comment: "A", Element: "button", ElementPath: "body > button"})
+	if !ok {
+		t.Fatal("AddAnnotation should succeed")
+	}
+
+	writer := newBufferSSEWriter(false)
+	service.sendInitialSync(writer, "", "")
+
+	dataLines := make([]string, 0, 2)
+	for _, line := range strings.Split(writer.String(), "\n") {
+		after, ok := strings.CutPrefix(line, "data: ")
+		if !ok {
+			continue
+		}
+		dataLines = append(dataLines, after)
+	}
+	if len(dataLines) != 2 {
+		t.Fatalf("data line count = %d, want 2; output=%s", len(dataLines), writer.String())
+	}
+
+	var annotationEvent map[string]any
+	if error := json.Unmarshal([]byte(dataLines[0]), &annotationEvent); error != nil {
+		t.Fatalf("unmarshal annotation event failed: %v", error)
+	}
+	if _, ok := annotationEvent["timestamp"].(float64); !ok {
+		t.Fatalf("annotation event timestamp type = %T, want number", annotationEvent["timestamp"])
+	}
+	payload, ok := annotationEvent["payload"].(map[string]any)
+	if !ok {
+		t.Fatalf("annotation event payload type = %T, want map[string]any", annotationEvent["payload"])
+	}
+	if payloadTimestamp, ok := payload["timestamp"].(float64); !ok || UnixMilli(int64(payloadTimestamp)) != annotation.Timestamp {
+		t.Fatalf("annotation payload timestamp = %#v, want %d", payload["timestamp"], annotation.Timestamp)
+	}
+
+	var syncPayload map[string]any
+	if error := json.Unmarshal([]byte(dataLines[1]), &syncPayload); error != nil {
+		t.Fatalf("unmarshal sync payload failed: %v", error)
+	}
+	if _, ok := syncPayload["timestamp"].(float64); !ok {
+		t.Fatalf("sync payload timestamp type = %T, want number", syncPayload["timestamp"])
+	}
 }
 
 func TestSessionAndGlobalEventHandlersDirect(t *testing.T) {

@@ -24,12 +24,12 @@ func TestListSessionsAndGetSession(t *testing.T) {
 			if request.Method != http.MethodGet {
 				t.Fatalf("method = %s, want GET", request.Method)
 			}
-			_, _ = writer.Write([]byte(`[{"id":"s1","url":"http://example.com","status":"active","createdAt":"now"}]`))
+			_, _ = writer.Write([]byte(`[{"id":"s1","url":"http://example.com","status":"active","createdAt":1774569600000}]`))
 		case "/sessions/s1":
 			if request.Method != http.MethodGet {
 				t.Fatalf("method = %s, want GET", request.Method)
 			}
-			_, _ = writer.Write([]byte(`{"id":"s1","url":"http://example.com","status":"active","createdAt":"now","annotations":[]}`))
+			_, _ = writer.Write([]byte(`{"id":"s1","url":"http://example.com","status":"active","createdAt":1774569600000,"annotations":[]}`))
 		default:
 			t.Fatalf("unexpected path: %s", request.URL.Path)
 		}
@@ -119,6 +119,106 @@ func TestGetPendingAllAndBySession(t *testing.T) {
 
 	if calls["/pending"] != 1 || calls["/pending?projectId=p1"] != 1 || calls["/sessions/s1/pending"] != 1 {
 		t.Fatalf("unexpected calls: %#v", calls)
+	}
+}
+
+func TestClientPreservesRichJSONFields(t *testing.T) {
+	testServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.RequestURI() {
+		case "/sessions/s1":
+			_, _ = writer.Write([]byte(`{
+				"id":"s1",
+				"url":"http://example.com",
+				"status":"active",
+				"createdAt":1774483200000,
+				"metadata":{"branch":"main"},
+				"annotations":[{
+					"id":"a1",
+					"sessionId":"s1",
+					"x":12.5,
+					"y":240,
+					"comment":"Fix button",
+					"element":"button",
+					"elementPath":"body > button",
+					"timestamp":1774490572310,
+					"boundingBox":{"x":1,"y":2,"width":3,"height":4},
+					"cssClasses":"btn primary",
+					"nearbyElements":"div.toolbar",
+					"computedStyles":"color: blue",
+					"createdAt":1774483201000,
+					"updatedAt":1774483202000,
+					"resolvedAt":1774483203000,
+					"resolvedBy":"agent",
+					"authorId":"u1",
+					"thread":[{"id":"m1","role":"human","content":"please fix","timestamp":1774490572311}]
+				}]
+			}`))
+		case "/pending?projectId=p-rich":
+			_, _ = writer.Write([]byte(`{
+				"count":1,
+				"annotations":[{
+					"id":"a2",
+					"sessionId":"s2",
+					"comment":"Need polish",
+					"element":"div",
+					"elementPath":"body > div",
+					"timestamp":1774490572999,
+					"reactComponents":"App > Panel",
+					"sourceFile":"src/Panel.tsx:10",
+					"elementBoundingBoxes":[{"x":10,"y":20,"width":30,"height":40}]
+				}]
+			}`))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.RequestURI())
+		}
+	}))
+	defer testServer.Close()
+
+	client := NewClient(testServer.URL)
+
+	session, err := client.GetSession(context.Background(), "s1")
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if session.Metadata["branch"] != "main" {
+		t.Fatalf("session.Metadata[branch] = %#v, want %q", session.Metadata["branch"], "main")
+	}
+	if len(session.Annotations) != 1 {
+		t.Fatalf("annotation count = %d, want 1", len(session.Annotations))
+	}
+	sessionAnnotation := session.Annotations[0]
+	if sessionAnnotation.X != 12.5 || sessionAnnotation.Y != 240 {
+		t.Fatalf("annotation coordinates = (%v, %v), want (12.5, 240)", sessionAnnotation.X, sessionAnnotation.Y)
+	}
+	if sessionAnnotation.BoundingBox["width"] != float64(3) {
+		t.Fatalf("bounding box width = %#v, want 3", sessionAnnotation.BoundingBox["width"])
+	}
+	if sessionAnnotation.ComputedStyles != "color: blue" {
+		t.Fatalf("computed styles = %q, want %q", sessionAnnotation.ComputedStyles, "color: blue")
+	}
+	if sessionAnnotation.UpdatedAt != 1774483202000 || sessionAnnotation.ResolvedAt != 1774483203000 {
+		t.Fatalf("unexpected lifecycle timestamps: updatedAt=%d resolvedAt=%d", sessionAnnotation.UpdatedAt, sessionAnnotation.ResolvedAt)
+	}
+	if len(sessionAnnotation.Thread) != 1 || sessionAnnotation.Thread[0].Timestamp != 1774490572311 {
+		t.Fatalf("thread = %#v, want preserved numeric timestamp", sessionAnnotation.Thread)
+	}
+
+	pending, err := client.GetPending(context.Background(), "", "p-rich")
+	if err != nil {
+		t.Fatalf("GetPending returned error: %v", err)
+	}
+	if pending.Count != 1 {
+		t.Fatalf("pending.Count = %d, want 1", pending.Count)
+	}
+	pendingAnnotation := pending.Annotations[0]
+	if pendingAnnotation.ReactComponents != "App > Panel" {
+		t.Fatalf("reactComponents = %q, want %q", pendingAnnotation.ReactComponents, "App > Panel")
+	}
+	if pendingAnnotation.SourceFile != "src/Panel.tsx:10" {
+		t.Fatalf("sourceFile = %q, want %q", pendingAnnotation.SourceFile, "src/Panel.tsx:10")
+	}
+	if len(pendingAnnotation.ElementBoundingBoxes) != 1 {
+		t.Fatalf("elementBoundingBoxes length = %d, want 1", len(pendingAnnotation.ElementBoundingBoxes))
 	}
 }
 

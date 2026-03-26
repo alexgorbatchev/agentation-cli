@@ -25,20 +25,20 @@ func mustWritef(t *testing.T, writer io.Writer, format string, args ...any) {
 
 func TestRunProjectsJSON(t *testing.T) {
 	now := time.Now().UTC()
-	recentCreatedAt := now.Add(-23 * time.Hour).Format(time.RFC3339Nano)
-	recentUpdatedAt := now.Add(-2 * time.Hour).Format(time.RFC3339Nano)
-	staleCreatedAt := now.Add(-25 * time.Hour).Format(time.RFC3339Nano)
+	recentCreatedAt := now.Add(-23 * time.Hour).UnixMilli()
+	recentUpdatedAt := now.Add(-2 * time.Hour).UnixMilli()
+	staleCreatedAt := now.Add(-25 * time.Hour).UnixMilli()
 
 	testServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.RequestURI() != "/sessions" {
 			t.Fatalf("request URI = %q, want %q", request.URL.RequestURI(), "/sessions")
 		}
 		mustWritef(t, writer, `[
-			{"id":"s1","projectId":"proj-b","createdAt":%q},
-			{"id":"s2","projectId":"proj-a","createdAt":%q},
-			{"id":"s3","projectId":"proj-b","createdAt":%q},
-			{"id":"s4","projectId":"proj-c","createdAt":%q,"updatedAt":%q},
-			{"id":"s5","projectId":"   ","createdAt":%q}
+			{"id":"s1","projectId":"proj-b","createdAt":%d},
+			{"id":"s2","projectId":"proj-a","createdAt":%d},
+			{"id":"s3","projectId":"proj-b","createdAt":%d},
+			{"id":"s4","projectId":"proj-c","createdAt":%d,"updatedAt":%d},
+			{"id":"s5","projectId":"   ","createdAt":%d}
 		]`,
 			recentCreatedAt,
 			staleCreatedAt,

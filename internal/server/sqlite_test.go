@@ -30,7 +30,7 @@ func TestSQLiteBackendRoundTrip(t *testing.T) {
 		ID:        "s1",
 		URL:       "http://example.com",
 		Status:    "active",
-		CreatedAt: nowISO(),
+		CreatedAt: nowUnixMilli(),
 		Metadata:  map[string]any{"env": "dev"},
 	}
 	if err := backend.UpsertSession(session); err != nil {
@@ -44,7 +44,7 @@ func TestSQLiteBackendRoundTrip(t *testing.T) {
 		Element:     "button",
 		ElementPath: "body > button",
 		Status:      StatusPending,
-		CreatedAt:   nowISO(),
+		CreatedAt:   nowUnixMilli(),
 	}
 	if err := backend.UpsertAnnotation(annotation); err != nil {
 		t.Fatalf("UpsertAnnotation error: %v", err)
@@ -161,7 +161,7 @@ func TestSQLiteLoadSnapshotErrors(t *testing.T) {
 		}
 	})
 
-	_, err = backend.db.Exec(`INSERT INTO sessions (id, url, status, created_at) VALUES ('s1', 'http://example.com', 'active', ?)`, nowISO())
+	_, err = backend.db.Exec(`INSERT INTO sessions (id, url, status, created_at) VALUES ('s1', 'http://example.com', 'active', ?)`, nowUnixMilli())
 	if err != nil {
 		t.Fatalf("insert session error: %v", err)
 	}
