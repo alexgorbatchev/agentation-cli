@@ -4,7 +4,7 @@ CLI companion for the Agentation Fork.
 
 ## Related repositories
 
-- [agentation-fork.vercel.app](https://agentation-fork.vercel.app)
+- [Agentation Fork docs](https://agentation.dev)
 - [Agentation Fork](https://github.com/alexgorbatchev/agentation)
 - [Agentation Skills](https://github.com/alexgorbatchev/agentation-skills)
 - [pi-agentation](https://github.com/alexgorbatchev/pi-agentation)
@@ -15,6 +15,14 @@ CLI companion for the Agentation Fork.
 
 ```bash
 npm install -g @alexgorbatchev/agentation-cli
+```
+
+For the supported project-local workflow used by the docs site and the frontend package README, you can also install it
+as a dev dependency and invoke it with `npx`:
+
+```bash
+npm install -D @alexgorbatchev/agentation-cli
+npx agentation start
 ```
 
 This repository now ships the CLI as:

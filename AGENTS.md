@@ -12,6 +12,26 @@ This repository publishes:
 
 It also publishes GitHub release archives via GoReleaser.
 
+## Mandatory docs sync when CLI behavior changes
+
+Whenever you change the CLI command surface, HTTP routes, SSE semantics, lifecycle behavior, router auth, project discovery,
+or environment variables, you must update the relevant docs in the same change set unless the change is explicitly
+internal-only and you can prove no public behavior changed.
+
+Minimum file checklist:
+
+- `README.md`
+- `../agentation/README.md`
+- `../agentation/packages/agentation/README.md`
+- `../agentation/packages/example/src/app/server/page.tsx`
+- `../agentation/packages/example/src/app/api/page.tsx`
+- `../agentation/packages/example/src/app/install/page.tsx`
+- `../agentation/packages/example/src/app/faq/page.tsx`
+- `../agentation/packages/example/src/app/changelog/page.tsx`
+
+If a CLI change affects the supported install flow, publish workflow, or package naming, also audit any other doc or site
+file that mentions those flows. Do not ship CLI changes with stale public docs.
+
 ## Trusted publishing requirements
 
 Before releasing, all five npm packages must already exist on npm and each one must be configured with the same trusted publisher:
